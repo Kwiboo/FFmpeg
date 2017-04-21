@@ -86,7 +86,7 @@ static double ffrkmpp_compute_framerate(AVCodecContext *avctx)
 
     clock_gettime(CLOCK_REALTIME, &time);
 
-    if (rk_context->framecount == 1) {
+    if (rk_context->framecount == 1 || rk_context->framecount == 2 || rk_context->framecount % 1000 == 0) {
         refframecount = rk_context->framecount;
         reftime.tv_sec  = time.tv_sec;
         reftime.tv_nsec = time.tv_nsec;
@@ -198,6 +198,8 @@ static int ffrkmpp_write_data(AVCodecContext *avctx, char *buffer, int size, int
 
     if (ret != MPP_ERR_BUFFER_FULL)
         profile_log(avctx, "Wrote %d bytes to decoder", size);
+    else
+        profile_log(avctx, "Buffer full writing %d bytes to decoder", size);
 
     mpp_packet_deinit(&packet);
 
@@ -210,6 +212,7 @@ static int ffrkmpp_close_decoder(AVCodecContext *avctx)
     RKMPPDecoder *decoder = rk_context->decoder;
 
     av_buffer_unref(&decoder->ref);
+    av_bsf_free(&rk_context->bsf);
 
     return 0;
 }
@@ -534,24 +537,43 @@ fail:
 
 static int ffrkmpp_decode(AVCodecContext *avctx, void *frame, int *got_frame, AVPacket *avpkt)
 {
+    int buffer_full = 0;
+    int decoder_timeout = 0;
+    int retries = 0;
     int ret;
 
     *got_frame = 0;
 
-    if (avpkt) {
-        if (avpkt->data == NULL && avpkt->size == 0)
-            ret = ffrkmpp_send_packet(avctx, NULL);
-        else
-            ret = ffrkmpp_send_packet(avctx, avpkt);
-        if (ret < 0 && ret != AVERROR(EAGAIN) && ret != AVERROR_EOF)
-            return ret;
-    }
+    do {
+        if (avpkt) {
+            if (avpkt->data == NULL && avpkt->size == 0)
+                ret = ffrkmpp_send_packet(avctx, NULL);
+            else
+                ret = ffrkmpp_send_packet(avctx, avpkt);
+            if (ret < 0 && ret != AVERROR(EAGAIN) && ret != AVERROR_EOF) {
+                av_log(avctx, AV_LOG_ERROR, "Failed to send packet (code = %d)\n", ret);
+                return ret;
+            }
+            buffer_full = ret == AVERROR(EAGAIN);
+        }
 
-    ret = ffrkmpp_receive_frame(avctx, frame);
-    if (ret < 0 && ret != AVERROR(EAGAIN) && ret != AVERROR_EOF)
-        return ret;
-    if (ret >= 0)
-        *got_frame = 1;
+        ret = ffrkmpp_receive_frame(avctx, frame);
+        if (ret < 0 && ret != AVERROR(EAGAIN) && ret != AVERROR_EOF) {
+            av_log(avctx, AV_LOG_ERROR, "Failed to receive frame (code = %d)\n", ret);
+            return ret;
+        }
+        if (ret >= 0)
+            *got_frame = 1;
+
+        decoder_timeout = ret == AVERROR(EAGAIN);
+    }
+    while (buffer_full && decoder_timeout && retries++ < 5);
+
+    if (buffer_full) {
+        ret = ffrkmpp_send_packet(avctx, avpkt);
+        if (ret < 0)
+            av_log(avctx, AV_LOG_ERROR, "Failed to send packet (code = %d)\n", ret);
+    }
 
     return avpkt ? avpkt->size : 0;
 }
