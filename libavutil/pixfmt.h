@@ -247,6 +247,11 @@ enum AVPixelFormat {
      */
     AV_PIX_FMT_CUDA,
 
+      /**
+     * HW acceleration though RockChip Media Process Platform
+     */
+    AV_PIX_FMT_RKMPP,
+
     AV_PIX_FMT_0RGB=0x123+4,///< packed RGB 8:8:8, 32bpp, XRGBXRGB...   X=unused/undefined
     AV_PIX_FMT_RGB0,        ///< packed RGB 8:8:8, 32bpp, RGBXRGBX...   X=unused/undefined
     AV_PIX_FMT_0BGR,        ///< packed BGR 8:8:8, 32bpp, XBGRXBGR...   X=unused/undefined

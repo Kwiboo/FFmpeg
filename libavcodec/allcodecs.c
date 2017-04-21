@@ -74,6 +74,7 @@ void avcodec_register_all(void)
     REGISTER_HWACCEL(H264_DXVA2,        h264_dxva2);
     REGISTER_HWACCEL(H264_MMAL,         h264_mmal);
     REGISTER_HWACCEL(H264_QSV,          h264_qsv);
+    REGISTER_HWACCEL(H264_RKMPP,        h264_rkmpp);
     REGISTER_HWACCEL(H264_VAAPI,        h264_vaapi);
     REGISTER_HWACCEL(H264_VDA,          h264_vda);
     REGISTER_HWACCEL(H264_VDA_OLD,      h264_vda_old);
@@ -83,6 +84,7 @@ void avcodec_register_all(void)
     REGISTER_HWACCEL(HEVC_D3D11VA,      hevc_d3d11va);
     REGISTER_HWACCEL(HEVC_DXVA2,        hevc_dxva2);
     REGISTER_HWACCEL(HEVC_QSV,          hevc_qsv);
+    REGISTER_HWACCEL(HEVC_RKMPP,        hevc_rkmpp);
     REGISTER_HWACCEL(HEVC_VAAPI,        hevc_vaapi);
     REGISTER_HWACCEL(HEVC_VDPAU,        hevc_vdpau);
     REGISTER_HWACCEL(MPEG1_XVMC,        mpeg1_xvmc);
@@ -108,6 +110,7 @@ void avcodec_register_all(void)
     REGISTER_HWACCEL(VC1_MMAL,          vc1_mmal);
     REGISTER_HWACCEL(VC1_QSV,           vc1_qsv);
     REGISTER_HWACCEL(VP8_CUVID,         vp8_cuvid);
+    REGISTER_HWACCEL(VP8_RKMPP,         vp8_rkmpp);
     REGISTER_HWACCEL(VP9_CUVID,         vp9_cuvid);
     REGISTER_HWACCEL(VP9_D3D11VA,       vp9_d3d11va);
     REGISTER_HWACCEL(VP9_DXVA2,         vp9_dxva2);
@@ -197,6 +200,7 @@ void avcodec_register_all(void)
     REGISTER_DECODER(H264_MEDIACODEC,   h264_mediacodec);
     REGISTER_DECODER(H264_MMAL,         h264_mmal);
     REGISTER_DECODER(H264_QSV,          h264_qsv);
+    REGISTER_DECODER(H264_RKMPP,        h264_rkmpp);
     REGISTER_DECODER(H264_VDA,          h264_vda);
 #if FF_API_VDPAU
     REGISTER_DECODER(H264_VDPAU,        h264_vdpau);
@@ -204,6 +208,7 @@ void avcodec_register_all(void)
     REGISTER_ENCDEC (HAP,               hap);
     REGISTER_DECODER(HEVC,              hevc);
     REGISTER_DECODER(HEVC_QSV,          hevc_qsv);
+    REGISTER_DECODER(HEVC_RKMPP,        hevc_rkmpp);
     REGISTER_DECODER(HNM4_VIDEO,        hnm4_video);
     REGISTER_DECODER(HQ_HQA,            hq_hqa);
     REGISTER_DECODER(HQX,               hqx);
@@ -350,6 +355,7 @@ void avcodec_register_all(void)
     REGISTER_DECODER(VP6F,              vp6f);
     REGISTER_DECODER(VP7,               vp7);
     REGISTER_DECODER(VP8,               vp8);
+    REGISTER_DECODER(VP8_RKMPP,         vp8_rkmpp);
     REGISTER_DECODER(VP9,               vp9);
     REGISTER_DECODER(VQA,               vqa);
     REGISTER_DECODER(WEBP,              webp);

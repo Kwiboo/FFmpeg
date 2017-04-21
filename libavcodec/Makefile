@@ -18,6 +18,7 @@ HEADERS = avcodec.h                                                     \
           videotoolbox.h                                                \
           vorbis_parser.h                                               \
           xvmc.h                                                        \
+          drmprime.h                                                    \
 
 OBJS = allcodecs.o                                                      \
        audioconvert.o                                                   \
@@ -315,6 +316,7 @@ OBJS-$(CONFIG_H264_DECODER)            += h264.o h264_cabac.o h264_cavlc.o \
 OBJS-$(CONFIG_H264_CUVID_DECODER)      += cuvid.o
 OBJS-$(CONFIG_H264_MEDIACODEC_DECODER) += mediacodecdec_h264.o
 OBJS-$(CONFIG_H264_MMAL_DECODER)       += mmaldec.o
+OBJS-$(CONFIG_H264_RKMPP_DECODER)      += rkmppdec.o
 OBJS-$(CONFIG_H264_NVENC_ENCODER)      += nvenc_h264.o
 OBJS-$(CONFIG_NVENC_ENCODER)           += nvenc_h264.o
 OBJS-$(CONFIG_NVENC_H264_ENCODER)      += nvenc_h264.o
@@ -330,6 +332,7 @@ OBJS-$(CONFIG_HEVC_DECODER)            += hevc.o hevc_mvs.o hevc_ps.o hevc_sei.o
                                           hevc_cabac.o hevc_refs.o hevcpred.o    \
                                           hevcdsp.o hevc_filter.o h2645_parse.o hevc_data.o
 OBJS-$(CONFIG_HEVC_CUVID_DECODER)      += cuvid.o
+OBJS-$(CONFIG_HEVC_RKMPP_DECODER)      += rkmppdec.o
 OBJS-$(CONFIG_HEVC_NVENC_ENCODER)      += nvenc_hevc.o
 OBJS-$(CONFIG_NVENC_HEVC_ENCODER)      += nvenc_hevc.o
 OBJS-$(CONFIG_HEVC_QSV_DECODER)        += qsvdec_h2645.o
@@ -589,6 +592,7 @@ OBJS-$(CONFIG_VP6_DECODER)             += vp6.o vp56.o vp56data.o \
 OBJS-$(CONFIG_VP7_DECODER)             += vp8.o vp56rac.o
 OBJS-$(CONFIG_VP8_DECODER)             += vp8.o vp56rac.o
 OBJS-$(CONFIG_VP8_CUVID_DECODER)       += cuvid.o
+OBJS-$(CONFIG_VP8_RKMPP_DECODER)       += rkmppdec.o
 OBJS-$(CONFIG_VP9_DECODER)             += vp9.o vp9dsp.o vp56rac.o vp9dsp_8bpp.o \
                                           vp9dsp_10bpp.o vp9dsp_12bpp.o
 OBJS-$(CONFIG_VP9_CUVID_DECODER)       += cuvid.o
