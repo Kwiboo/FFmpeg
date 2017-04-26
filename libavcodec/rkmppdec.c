@@ -364,17 +364,24 @@ static int ffrkmpp_send_packet(AVCodecContext *avctx, const AVPacket *avpkt)
     // on first packet, send extradata
     if (decoder->first_packet) {
 
-        if (rk_context->bsf)
+        if (rk_context->bsf && rk_context->bsf->par_out->extradata_size) {
             ret = ffrkmpp_write_data(avctx, rk_context->bsf->par_out->extradata,
                                           rk_context->bsf->par_out->extradata_size,
                                           avpkt->pts);
-        else
+            if (ret) {
+                av_log(avctx, AV_LOG_ERROR, "Failed to write extradata to decoder\n");
+                goto fail;
+            }
+        }
+
+        else if (avctx->extradata && avctx->extradata_size) {
             ret = ffrkmpp_write_data(avctx, avctx->extradata,
                                           avctx->extradata_size,
                                           avpkt->pts);
-        if (ret) {
-            av_log(avctx, AV_LOG_ERROR, "Failed to write extradata to decoder\n");
-            goto fail;
+            if (ret) {
+                av_log(avctx, AV_LOG_ERROR, "Failed to write extradata to decoder\n");
+                goto fail;
+            }
         }
 
         decoder->first_packet = 0;
