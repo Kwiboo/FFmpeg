@@ -478,6 +478,13 @@ retry :
     }
 
     if (mppframe) {
+        // smoother start decoder
+        if (mpp_frame_get_errinfo(mppframe)) {
+            av_log(avctx, AV_LOG_INFO, "Current frame must drop.\n");
+            ret = AVERROR(EAGAIN);
+            goto fail;
+        }
+
         // setup general frame fields
         frame->format = AV_PIX_FMT_RKMPP;
         frame->width  = mpp_frame_get_width(mppframe);
@@ -544,43 +551,32 @@ fail:
 
 static int ffrkmpp_decode(AVCodecContext *avctx, void *frame, int *got_frame, AVPacket *avpkt)
 {
-    int buffer_full = 0;
-    int decoder_timeout = 0;
-    int retries = 0;
-    int ret;
+    int ret_in, ret_out;
 
     *got_frame = 0;
 
-    do {
-        if (avpkt) {
-            if (avpkt->data == NULL && avpkt->size == 0)
-                ret = ffrkmpp_send_packet(avctx, NULL);
-            else
-                ret = ffrkmpp_send_packet(avctx, avpkt);
-            if (ret < 0 && ret != AVERROR(EAGAIN) && ret != AVERROR_EOF) {
-                av_log(avctx, AV_LOG_ERROR, "Failed to send packet (code = %d)\n", ret);
-                return ret;
-            }
-            buffer_full = ret == AVERROR(EAGAIN);
-        }
-
-        ret = ffrkmpp_receive_frame(avctx, frame);
-        if (ret < 0 && ret != AVERROR(EAGAIN) && ret != AVERROR_EOF) {
-            av_log(avctx, AV_LOG_ERROR, "Failed to receive frame (code = %d)\n", ret);
-            return ret;
-        }
-        if (ret >= 0)
-            *got_frame = 1;
-
-        decoder_timeout = ret == AVERROR(EAGAIN);
+again:
+    if (avpkt) {
+        if (avpkt->data == NULL && avpkt->size == 0)
+            ret_in = ffrkmpp_send_packet(avctx, NULL);
+        else
+            ret_in = ffrkmpp_send_packet(avctx, avpkt);
+        if (ret_in < 0 && ret_in != AVERROR(EAGAIN) && ret_in != AVERROR_EOF)
+            return ret_in;
     }
-    while (buffer_full && decoder_timeout && retries++ < 5);
 
-    if (buffer_full) {
-        ret = ffrkmpp_send_packet(avctx, avpkt);
-        if (ret < 0)
-            av_log(avctx, AV_LOG_ERROR, "Failed to send packet (code = %d)\n", ret);
+    ret_out = ffrkmpp_receive_frame(avctx, frame);
+    if (ret_out < 0 && ret_out != AVERROR(EAGAIN) && ret_out != AVERROR_EOF)
+        return ret_out;
+
+    // Wait until decoder accepts the avpkt 
+    if (ret_in == AVERROR(EAGAIN)) {
+        usleep(2000);
+        goto again;
     }
+
+    if (ret_out >= 0)
+        *got_frame = 1;
 
     return avpkt ? avpkt->size : 0;
 }
