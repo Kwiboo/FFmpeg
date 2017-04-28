@@ -463,6 +463,11 @@ retry :
             av_log(avctx, AV_LOG_INFO, "Decoder noticed an info change (%dx%d), format=%d\n",
                                         mpp_frame_get_width(mppframe),  mpp_frame_get_height(mppframe),
                                         mpp_frame_get_fmt(mppframe));
+
+            avctx->width = mpp_frame_get_width(mppframe);
+            avctx->height = mpp_frame_get_height(mppframe);
+            //avctx->pix_fmt = mpp_frame_get_fmt(mppframe); currently this is 0 !?
+
             decoder->mpi->control(decoder->ctx, MPP_DEC_SET_INFO_CHANGE_READY, NULL);
             mpp_frame_deinit(&mppframe);
 
@@ -479,8 +484,7 @@ retry :
 
     if (mppframe) {
         // smoother start decoder
-        if (mpp_frame_get_errinfo(mppframe)) {
-            av_log(avctx, AV_LOG_INFO, "Current frame must drop.\n");
+        if (mpp_frame_get_discard(mppframe) || mpp_frame_get_errinfo(mppframe)) {
             ret = AVERROR(EAGAIN);
             goto fail;
         }
@@ -565,18 +569,20 @@ again:
             return ret_in;
     }
 
-    ret_out = ffrkmpp_receive_frame(avctx, frame);
-    if (ret_out < 0 && ret_out != AVERROR(EAGAIN) && ret_out != AVERROR_EOF)
-        return ret_out;
+    if (*got_frame == 0) {
+        ret_out = ffrkmpp_receive_frame(avctx, frame);
+        if (ret_out < 0 && ret_out != AVERROR(EAGAIN) && ret_out != AVERROR_EOF)
+            return ret_out;
+
+        if (ret_out >= 0)
+            *got_frame = 1;
+    }
 
     // Wait until decoder accepts the avpkt 
     if (ret_in == AVERROR(EAGAIN)) {
         usleep(2000);
         goto again;
     }
-
-    if (ret_out >= 0)
-        *got_frame = 1;
 
     return avpkt ? avpkt->size : 0;
 }
