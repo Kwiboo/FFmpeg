@@ -1094,6 +1094,9 @@ const FFCodec ff_h264_decoder = {
 #if CONFIG_H264_VIDEOTOOLBOX_HWACCEL
                                HWACCEL_VIDEOTOOLBOX(h264),
 #endif
+#if CONFIG_H264_V4L2REQUEST_HWACCEL
+                               HWACCEL_V4L2REQUEST(h264),
+#endif
                                NULL
                            },
     .caps_internal         = FF_CODEC_CAP_EXPORTS_CROPPING |
