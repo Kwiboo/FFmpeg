@@ -401,6 +401,7 @@ static enum AVPixelFormat get_format(HEVCContext *s, const HEVCSPS *sps)
 #define HWACCEL_MAX (CONFIG_HEVC_DXVA2_HWACCEL + \
                      CONFIG_HEVC_D3D11VA_HWACCEL * 2 + \
                      CONFIG_HEVC_NVDEC_HWACCEL + \
+                     CONFIG_HEVC_V4L2REQUEST_HWACCEL + \
                      CONFIG_HEVC_VAAPI_HWACCEL + \
                      CONFIG_HEVC_VIDEOTOOLBOX_HWACCEL + \
                      CONFIG_HEVC_VDPAU_HWACCEL + \
@@ -432,6 +433,9 @@ static enum AVPixelFormat get_format(HEVCContext *s, const HEVCSPS *sps)
 #if CONFIG_HEVC_VULKAN_HWACCEL
         *fmt++ = AV_PIX_FMT_VULKAN;
 #endif
+#if CONFIG_HEVC_V4L2REQUEST_HWACCEL
+        *fmt++ = AV_PIX_FMT_DRM_PRIME;
+#endif
         break;
     case AV_PIX_FMT_YUV420P10:
 #if CONFIG_HEVC_DXVA2_HWACCEL
@@ -455,6 +459,9 @@ static enum AVPixelFormat get_format(HEVCContext *s, const HEVCSPS *sps)
 #endif
 #if CONFIG_HEVC_NVDEC_HWACCEL
         *fmt++ = AV_PIX_FMT_CUDA;
+#endif
+#if CONFIG_HEVC_V4L2REQUEST_HWACCEL
+        *fmt++ = AV_PIX_FMT_DRM_PRIME;
 #endif
         break;
     case AV_PIX_FMT_YUV444P:
@@ -3728,6 +3735,9 @@ const FFCodec ff_hevc_decoder = {
 #endif
 #if CONFIG_HEVC_VULKAN_HWACCEL
                                HWACCEL_VULKAN(hevc),
+#endif
+#if CONFIG_HEVC_V4L2REQUEST_HWACCEL
+                               HWACCEL_V4L2REQUEST(hevc),
 #endif
                                NULL
                            },
