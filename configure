@@ -3267,6 +3267,8 @@ vc1_vdpau_hwaccel_deps="vdpau"
 vc1_vdpau_hwaccel_select="vc1_decoder"
 vp8_nvdec_hwaccel_deps="nvdec"
 vp8_nvdec_hwaccel_select="vp8_decoder"
+vp8_v4l2request_hwaccel_deps="v4l2_request vp8_v4l2_request"
+vp8_v4l2request_hwaccel_select="vp8_decoder"
 vp8_vaapi_hwaccel_deps="vaapi"
 vp8_vaapi_hwaccel_select="vp8_decoder"
 vp9_d3d11va_hwaccel_deps="d3d11va DXVA_PicParams_VP9"
@@ -7179,6 +7181,7 @@ if enabled v4l2_request; then
     check_func_headers "linux/media.h linux/videodev2.h" v4l2_timeval_to_ns
     check_cc h264_v4l2_request linux/videodev2.h "int i = V4L2_PIX_FMT_H264_SLICE;"
     check_cc mpeg2_v4l2_request linux/videodev2.h "int i = V4L2_PIX_FMT_MPEG2_SLICE;"
+    check_cc vp8_v4l2_request linux/videodev2.h "int i = V4L2_PIX_FMT_VP8_FRAME;"
 fi
 
 check_headers sys/videoio.h
