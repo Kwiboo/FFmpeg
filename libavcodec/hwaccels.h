@@ -76,6 +76,7 @@ extern const struct FFHWAccel ff_vc1_nvdec_hwaccel;
 extern const struct FFHWAccel ff_vc1_vaapi_hwaccel;
 extern const struct FFHWAccel ff_vc1_vdpau_hwaccel;
 extern const struct FFHWAccel ff_vp8_nvdec_hwaccel;
+extern const struct FFHWAccel ff_vp8_v4l2request_hwaccel;
 extern const struct FFHWAccel ff_vp8_vaapi_hwaccel;
 extern const struct FFHWAccel ff_vp9_d3d11va_hwaccel;
 extern const struct FFHWAccel ff_vp9_d3d11va2_hwaccel;
