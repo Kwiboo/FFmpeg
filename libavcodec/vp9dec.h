@@ -134,6 +134,10 @@ typedef struct VP9Context {
         ProbContext p;
         uint8_t coef[4][2][2][6][6][11];
     } prob;
+    struct {
+        ProbContext p;
+        uint8_t coef[4][2][2][6][6][11];
+    } prob_raw;
 
     // contextual (above) cache
     uint8_t *above_partition_ctx;
