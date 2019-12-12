@@ -163,6 +163,7 @@ static int update_size(AVCodecContext *avctx, int w, int h)
                      CONFIG_VP9_D3D11VA_HWACCEL * 2 + \
                      CONFIG_VP9_D3D12VA_HWACCEL + \
                      CONFIG_VP9_NVDEC_HWACCEL + \
+                     CONFIG_VP9_V4L2REQUEST_HWACCEL + \
                      CONFIG_VP9_VAAPI_HWACCEL + \
                      CONFIG_VP9_VDPAU_HWACCEL + \
                      CONFIG_VP9_VIDEOTOOLBOX_HWACCEL)
@@ -202,6 +203,9 @@ static int update_size(AVCodecContext *avctx, int w, int h)
 #endif
 #if CONFIG_VP9_VIDEOTOOLBOX_HWACCEL
             *fmtp++ = AV_PIX_FMT_VIDEOTOOLBOX;
+#endif
+#if CONFIG_VP9_V4L2REQUEST_HWACCEL
+            *fmtp++ = AV_PIX_FMT_DRM_PRIME;
 #endif
             break;
         case AV_PIX_FMT_YUV420P12:
@@ -375,7 +379,7 @@ static av_always_inline int inv_recenter_nonneg(int v, int m)
 }
 
 // differential forward probability updates
-static int update_prob(VPXRangeCoder *c, int p)
+static int read_prob_delta(VPXRangeCoder *c)
 {
     static const uint8_t inv_map_table[255] = {
           7,  20,  33,  46,  59,  72,  85,  98, 111, 124, 137, 150, 163, 176,
@@ -429,8 +433,13 @@ static int update_prob(VPXRangeCoder *c, int p)
         av_assert2(d < FF_ARRAY_ELEMS(inv_map_table));
     }
 
-    return p <= 128 ? 1 + inv_recenter_nonneg(inv_map_table[d], p - 1) :
-                    255 - inv_recenter_nonneg(inv_map_table[d], 255 - p);
+    return inv_map_table[d];
+}
+
+static int update_prob(int p, int d)
+{
+    return p <= 128 ? 1 + inv_recenter_nonneg(d, p - 1) :
+                    255 - inv_recenter_nonneg(d, 255 - p);
 }
 
 static int read_colorspace_details(AVCodecContext *avctx)
@@ -697,7 +706,8 @@ static int decode_frame_header(AVCodecContext *avctx,
                                          get_bits(&s->gb, 8) : 255;
         }
 
-        if (get_bits1(&s->gb)) {
+        s->s.h.segmentation.update_data = get_bits1(&s->gb);
+        if (s->s.h.segmentation.update_data) {
             s->s.h.segmentation.absolute_vals = get_bits1(&s->gb);
             for (i = 0; i < 8; i++) {
                 if ((s->s.h.segmentation.feat[i].q_enabled = get_bits1(&s->gb)))
@@ -903,6 +913,8 @@ static int decode_frame_header(AVCodecContext *avctx,
      * as explicit copies if the fw update is missing (and skip the copy upon
      * fw update)? */
     s->prob.p = s->prob_ctx[c].p;
+    memset(&s->prob_raw.p, 0, sizeof(s->prob_raw.p));
+    memset(&s->prob_raw.coef, 0, sizeof(s->prob_raw.coef));
 
     // txfm updates
     if (s->s.h.lossless) {
@@ -914,18 +926,25 @@ static int decode_frame_header(AVCodecContext *avctx,
 
         if (s->s.h.txfmmode == TX_SWITCHABLE) {
             for (i = 0; i < 2; i++)
-                if (vpx_rac_get_prob_branchy(&s->c, 252))
-                    s->prob.p.tx8p[i] = update_prob(&s->c, s->prob.p.tx8p[i]);
+                if (vpx_rac_get_prob_branchy(&s->c, 252)) {
+                    s->prob_raw.p.tx8p[i] = read_prob_delta(&s->c);
+                    s->prob.p.tx8p[i] = update_prob(s->prob.p.tx8p[i],
+                                                    s->prob_raw.p.tx8p[i]);
+                }
             for (i = 0; i < 2; i++)
                 for (j = 0; j < 2; j++)
-                    if (vpx_rac_get_prob_branchy(&s->c, 252))
-                        s->prob.p.tx16p[i][j] =
-                            update_prob(&s->c, s->prob.p.tx16p[i][j]);
+                    if (vpx_rac_get_prob_branchy(&s->c, 252)) {
+                        s->prob_raw.p.tx16p[i][j] = read_prob_delta(&s->c);
+                        s->prob.p.tx16p[i][j] = update_prob(s->prob.p.tx16p[i][j],
+                                                            s->prob_raw.p.tx16p[i][j]);
+                    }
             for (i = 0; i < 2; i++)
                 for (j = 0; j < 3; j++)
-                    if (vpx_rac_get_prob_branchy(&s->c, 252))
-                        s->prob.p.tx32p[i][j] =
-                            update_prob(&s->c, s->prob.p.tx32p[i][j]);
+                    if (vpx_rac_get_prob_branchy(&s->c, 252)) {
+                        s->prob_raw.p.tx32p[i][j] = read_prob_delta(&s->c);
+                        s->prob.p.tx32p[i][j] = update_prob(s->prob.p.tx32p[i][j],
+                                                            s->prob_raw.p.tx32p[i][j]);
+                    }
         }
     }
 
@@ -937,15 +956,18 @@ static int decode_frame_header(AVCodecContext *avctx,
                 for (k = 0; k < 2; k++)
                     for (l = 0; l < 6; l++)
                         for (m = 0; m < 6; m++) {
+                            uint8_t *pd = s->prob_raw.coef[i][j][k][l][m];
                             uint8_t *p = s->prob.coef[i][j][k][l][m];
                             uint8_t *r = ref[j][k][l][m];
                             if (m >= 3 && l == 0) // dc only has 3 pt
                                 break;
                             for (n = 0; n < 3; n++) {
-                                if (vpx_rac_get_prob_branchy(&s->c, 252))
-                                    p[n] = update_prob(&s->c, r[n]);
-                                else
+                                if (vpx_rac_get_prob_branchy(&s->c, 252)) {
+                                    pd[n] = read_prob_delta(&s->c);
+                                    p[n] = update_prob(r[n], pd[n]);
+                                } else {
                                     p[n] = r[n];
+                                }
                             }
                             memcpy(&p[3], ff_vp9_model_pareto8[p[2]], 8);
                         }
@@ -968,25 +990,37 @@ static int decode_frame_header(AVCodecContext *avctx,
 
     // mode updates
     for (i = 0; i < 3; i++)
-        if (vpx_rac_get_prob_branchy(&s->c, 252))
-            s->prob.p.skip[i] = update_prob(&s->c, s->prob.p.skip[i]);
+        if (vpx_rac_get_prob_branchy(&s->c, 252)) {
+            s->prob_raw.p.skip[i] = read_prob_delta(&s->c);
+            s->prob.p.skip[i] = update_prob(s->prob.p.skip[i],
+                                            s->prob_raw.p.skip[i]);
+        }
     if (!s->s.h.keyframe && !s->s.h.intraonly) {
         for (i = 0; i < 7; i++)
             for (j = 0; j < 3; j++)
-                if (vpx_rac_get_prob_branchy(&s->c, 252))
+                if (vpx_rac_get_prob_branchy(&s->c, 252)) {
+                    s->prob_raw.p.mv_mode[i][j] = read_prob_delta(&s->c);
                     s->prob.p.mv_mode[i][j] =
-                        update_prob(&s->c, s->prob.p.mv_mode[i][j]);
+                        update_prob(s->prob.p.mv_mode[i][j],
+                                    s->prob_raw.p.mv_mode[i][j]);
+                }
 
         if (s->s.h.filtermode == FILTER_SWITCHABLE)
             for (i = 0; i < 4; i++)
                 for (j = 0; j < 2; j++)
-                    if (vpx_rac_get_prob_branchy(&s->c, 252))
+                    if (vpx_rac_get_prob_branchy(&s->c, 252)) {
+                        s->prob_raw.p.filter[i][j] = read_prob_delta(&s->c);
                         s->prob.p.filter[i][j] =
-                            update_prob(&s->c, s->prob.p.filter[i][j]);
+                            update_prob(s->prob.p.filter[i][j],
+                                        s->prob_raw.p.filter[i][j]);
+                    }
 
         for (i = 0; i < 4; i++)
-            if (vpx_rac_get_prob_branchy(&s->c, 252))
-                s->prob.p.intra[i] = update_prob(&s->c, s->prob.p.intra[i]);
+            if (vpx_rac_get_prob_branchy(&s->c, 252)) {
+                s->prob_raw.p.intra[i] = read_prob_delta(&s->c);
+                s->prob.p.intra[i] = update_prob(s->prob.p.intra[i],
+                                                 s->prob_raw.p.intra[i]);
+            }
 
         if (s->s.h.allowcompinter) {
             s->s.h.comppredmode = vp89_rac_get(&s->c);
@@ -994,92 +1028,134 @@ static int decode_frame_header(AVCodecContext *avctx,
                 s->s.h.comppredmode += vp89_rac_get(&s->c);
             if (s->s.h.comppredmode == PRED_SWITCHABLE)
                 for (i = 0; i < 5; i++)
-                    if (vpx_rac_get_prob_branchy(&s->c, 252))
+                    if (vpx_rac_get_prob_branchy(&s->c, 252)) {
+                        s->prob_raw.p.comp[i] = read_prob_delta(&s->c);
                         s->prob.p.comp[i] =
-                            update_prob(&s->c, s->prob.p.comp[i]);
+                            update_prob(s->prob.p.comp[i], s->prob_raw.p.comp[i]);
+                    }
         } else {
             s->s.h.comppredmode = PRED_SINGLEREF;
         }
 
         if (s->s.h.comppredmode != PRED_COMPREF) {
             for (i = 0; i < 5; i++) {
-                if (vpx_rac_get_prob_branchy(&s->c, 252))
+                if (vpx_rac_get_prob_branchy(&s->c, 252)) {
+                    s->prob_raw.p.single_ref[i][0] = read_prob_delta(&s->c);
                     s->prob.p.single_ref[i][0] =
-                        update_prob(&s->c, s->prob.p.single_ref[i][0]);
-                if (vpx_rac_get_prob_branchy(&s->c, 252))
+                        update_prob(s->prob.p.single_ref[i][0],
+                                    s->prob_raw.p.single_ref[i][0]);
+                }
+                if (vpx_rac_get_prob_branchy(&s->c, 252)) {
+                    s->prob_raw.p.single_ref[i][1] = read_prob_delta(&s->c);
                     s->prob.p.single_ref[i][1] =
-                        update_prob(&s->c, s->prob.p.single_ref[i][1]);
+                        update_prob(s->prob.p.single_ref[i][1],
+                                    s->prob_raw.p.single_ref[i][1]);
+                }
             }
         }
 
         if (s->s.h.comppredmode != PRED_SINGLEREF) {
             for (i = 0; i < 5; i++)
-                if (vpx_rac_get_prob_branchy(&s->c, 252))
+                if (vpx_rac_get_prob_branchy(&s->c, 252)) {
+                    s->prob_raw.p.comp_ref[i] = read_prob_delta(&s->c);
                     s->prob.p.comp_ref[i] =
-                        update_prob(&s->c, s->prob.p.comp_ref[i]);
+                        update_prob(s->prob.p.comp_ref[i],
+                                    s->prob_raw.p.comp_ref[i]);
+                }
         }
 
         for (i = 0; i < 4; i++)
             for (j = 0; j < 9; j++)
-                if (vpx_rac_get_prob_branchy(&s->c, 252))
+                if (vpx_rac_get_prob_branchy(&s->c, 252)) {
+                    s->prob_raw.p.y_mode[i][j] = read_prob_delta(&s->c);
                     s->prob.p.y_mode[i][j] =
-                        update_prob(&s->c, s->prob.p.y_mode[i][j]);
+                        update_prob(s->prob.p.y_mode[i][j],
+                                    s->prob_raw.p.y_mode[i][j]);
+                }
 
         for (i = 0; i < 4; i++)
             for (j = 0; j < 4; j++)
                 for (k = 0; k < 3; k++)
-                    if (vpx_rac_get_prob_branchy(&s->c, 252))
+                    if (vpx_rac_get_prob_branchy(&s->c, 252)) {
+                        s->prob_raw.p.partition[i][j][k] = read_prob_delta(&s->c);
                         s->prob.p.partition[3 - i][j][k] =
-                            update_prob(&s->c,
-                                        s->prob.p.partition[3 - i][j][k]);
+                            update_prob(s->prob.p.partition[3 - i][j][k],
+                                        s->prob_raw.p.partition[i][j][k]);
+                    }
 
         // mv fields don't use the update_prob subexp model for some reason
         for (i = 0; i < 3; i++)
-            if (vpx_rac_get_prob_branchy(&s->c, 252))
-                s->prob.p.mv_joint[i] = (vp89_rac_get_uint(&s->c, 7) << 1) | 1;
+            if (vpx_rac_get_prob_branchy(&s->c, 252)) {
+                s->prob_raw.p.mv_joint[i] = (vp89_rac_get_uint(&s->c, 7) << 1) | 1;
+                s->prob.p.mv_joint[i] = s->prob_raw.p.mv_joint[i];
+            }
 
         for (i = 0; i < 2; i++) {
-            if (vpx_rac_get_prob_branchy(&s->c, 252))
+            if (vpx_rac_get_prob_branchy(&s->c, 252)) {
+                s->prob_raw.p.mv_comp[i].sign =
+                    (vp89_rac_get_uint(&s->c, 7) << 1) | 1;
                 s->prob.p.mv_comp[i].sign =
-                    (vp89_rac_get_uint(&s->c, 7) << 1) | 1;
+                    s->prob_raw.p.mv_comp[i].sign;
+            }
 
             for (j = 0; j < 10; j++)
-                if (vpx_rac_get_prob_branchy(&s->c, 252))
+                if (vpx_rac_get_prob_branchy(&s->c, 252)) {
+                    s->prob_raw.p.mv_comp[i].classes[j] =
+                        (vp89_rac_get_uint(&s->c, 7) << 1) | 1;
                     s->prob.p.mv_comp[i].classes[j] =
-                        (vp89_rac_get_uint(&s->c, 7) << 1) | 1;
+                        s->prob_raw.p.mv_comp[i].classes[j];
+                }
 
-            if (vpx_rac_get_prob_branchy(&s->c, 252))
-                s->prob.p.mv_comp[i].class0 =
+            if (vpx_rac_get_prob_branchy(&s->c, 252)) {
+                s->prob_raw.p.mv_comp[i].class0 =
                     (vp89_rac_get_uint(&s->c, 7) << 1) | 1;
+                s->prob.p.mv_comp[i].class0 =
+                    s->prob_raw.p.mv_comp[i].class0;
+            }
 
             for (j = 0; j < 10; j++)
-                if (vpx_rac_get_prob_branchy(&s->c, 252))
-                    s->prob.p.mv_comp[i].bits[j] =
+                if (vpx_rac_get_prob_branchy(&s->c, 252)) {
+                    s->prob_raw.p.mv_comp[i].bits[j] =
                         (vp89_rac_get_uint(&s->c, 7) << 1) | 1;
+                    s->prob.p.mv_comp[i].bits[j] =
+                        s->prob_raw.p.mv_comp[i].bits[j];
+                }
         }
 
         for (i = 0; i < 2; i++) {
             for (j = 0; j < 2; j++)
                 for (k = 0; k < 3; k++)
-                    if (vpx_rac_get_prob_branchy(&s->c, 252))
-                        s->prob.p.mv_comp[i].class0_fp[j][k] =
+                    if (vpx_rac_get_prob_branchy(&s->c, 252)) {
+                        s->prob_raw.p.mv_comp[i].class0_fp[j][k] =
                             (vp89_rac_get_uint(&s->c, 7) << 1) | 1;
+                        s->prob.p.mv_comp[i].class0_fp[j][k] =
+                            s->prob_raw.p.mv_comp[i].class0_fp[j][k];
+                    }
 
             for (j = 0; j < 3; j++)
-                if (vpx_rac_get_prob_branchy(&s->c, 252))
-                    s->prob.p.mv_comp[i].fp[j] =
+                if (vpx_rac_get_prob_branchy(&s->c, 252)) {
+                    s->prob_raw.p.mv_comp[i].fp[j] =
                         (vp89_rac_get_uint(&s->c, 7) << 1) | 1;
+                    s->prob.p.mv_comp[i].fp[j] =
+                        s->prob_raw.p.mv_comp[i].fp[j];
+                }
         }
 
         if (s->s.h.highprecisionmvs) {
             for (i = 0; i < 2; i++) {
-                if (vpx_rac_get_prob_branchy(&s->c, 252))
+                if (vpx_rac_get_prob_branchy(&s->c, 252)) {
+                    s->prob_raw.p.mv_comp[i].class0_hp =
+                        (vp89_rac_get_uint(&s->c, 7) << 1) | 1;
                     s->prob.p.mv_comp[i].class0_hp =
-                        (vp89_rac_get_uint(&s->c, 7) << 1) | 1;
+                        s->prob_raw.p.mv_comp[i].class0_hp;
+                }
 
-                if (vpx_rac_get_prob_branchy(&s->c, 252))
-                    s->prob.p.mv_comp[i].hp =
+                if (vpx_rac_get_prob_branchy(&s->c, 252)) {
+                    s->prob_raw.p.mv_comp[i].hp =
                         (vp89_rac_get_uint(&s->c, 7) << 1) | 1;
+                    s->prob.p.mv_comp[i].hp =
+                        s->prob_raw.p.mv_comp[i].hp;
+                }
             }
         }
     }
@@ -1870,6 +1946,9 @@ const FFCodec ff_vp9_decoder = {
 #endif
 #if CONFIG_VP9_VIDEOTOOLBOX_HWACCEL
                                HWACCEL_VIDEOTOOLBOX(vp9),
+#endif
+#if CONFIG_VP9_V4L2REQUEST_HWACCEL
+                               HWACCEL_V4L2REQUEST(vp9),
 #endif
                                NULL
                            },
