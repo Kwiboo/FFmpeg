@@ -966,7 +966,7 @@ static AVBufferRef *v4l2_request_frame_alloc(void *opaque, size_t size)
     if (!data)
         return NULL;
 
-    av_log(avctx, AV_LOG_DEBUG, "%s: avctx=%p size=%d data=%p\n", __func__, avctx, size, data);
+    av_log(avctx, AV_LOG_DEBUG, "%s: avctx=%p size=%zu data=%p\n", __func__, avctx, size, data);
 
     ref = av_buffer_create(data, size, v4l2_request_frame_free, avctx, 0);
     if (!ref) {
@@ -998,7 +998,7 @@ static AVBufferRef *v4l2_request_frame_alloc(void *opaque, size_t size)
         return NULL;
     }
 
-    av_log(avctx, AV_LOG_DEBUG, "%s: avctx=%p size=%d data=%p request_fd=%d\n", __func__, avctx, size, data, req->request_fd);
+    av_log(avctx, AV_LOG_DEBUG, "%s: avctx=%p size=%zu data=%p request_fd=%d\n", __func__, avctx, size, data, req->request_fd);
     return ref;
 }
 
