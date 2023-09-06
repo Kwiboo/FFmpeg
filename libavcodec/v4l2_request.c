@@ -732,12 +732,13 @@ static int v4l2_request_probe_media_device(struct udev_device *device, AVCodecCo
         ret = v4l2_request_probe_video_device(video_device, avctx, pixelformat, buffersize, control, count);
         udev_device_unref(video_device);
 
-        if (!ret)
-            break;
+        if (!ret) {
+            av_freep(&interfaces);
+            return 0;
+        }
     }
 
-    av_freep(&interfaces);
-    return ret;
+    av_log(avctx, AV_LOG_INFO, "%s: no matching V4L2 interfaces found\n", __func__);
 
 fail:
     av_freep(&interfaces);
