@@ -203,6 +203,27 @@ static const struct {
 #if defined(V4L2_PIX_FMT_NV20) && defined(DRM_FORMAT_NV20)
     { V4L2_PIX_FMT_NV20, AV_PIX_FMT_NONE, DRM_FORMAT_NV20, DRM_FORMAT_MOD_LINEAR },
 #endif
+    { V4L2_PIX_FMT_P010, AV_PIX_FMT_P010, DRM_FORMAT_P010, DRM_FORMAT_MOD_LINEAR },
+#if defined(V4L2_PIX_FMT_YUV420_10_AFBC_16X16_SPLIT)
+    {
+        .pixelformat = V4L2_PIX_FMT_YUV420_10_AFBC_16X16_SPLIT,
+        .sw_format = AV_PIX_FMT_NONE,
+        .drm_format = DRM_FORMAT_YUV420_10BIT,
+        .format_modifier = DRM_FORMAT_MOD_ARM_AFBC(AFBC_FORMAT_MOD_BLOCK_SIZE_16x16 |
+                                                   AFBC_FORMAT_MOD_SPARSE |
+                                                   AFBC_FORMAT_MOD_SPLIT),
+    },
+#endif
+#if defined(V4L2_PIX_FMT_YUV420_8_AFBC_16X16_SPLIT)
+    {
+        .pixelformat = V4L2_PIX_FMT_YUV420_8_AFBC_16X16_SPLIT,
+        .sw_format = AV_PIX_FMT_NONE,
+        .drm_format = DRM_FORMAT_YUV420_8BIT,
+        .format_modifier = DRM_FORMAT_MOD_ARM_AFBC(AFBC_FORMAT_MOD_BLOCK_SIZE_16x16 |
+                                                   AFBC_FORMAT_MOD_SPARSE |
+                                                   AFBC_FORMAT_MOD_SPLIT),
+    },
+#endif
 };
 
 static int v4l2_request_set_drm_descriptor(V4L2RequestDescriptor *req, struct v4l2_format *format)
@@ -228,15 +249,18 @@ static int v4l2_request_set_drm_descriptor(V4L2RequestDescriptor *req, struct v4
     desc->objects[0].size = req->capture.size;
 
     desc->nb_layers = 1;
-    layer->nb_planes = 2;
+    layer->nb_planes = 1;
 
     layer->planes[0].object_index = 0;
     layer->planes[0].offset = 0;
     layer->planes[0].pitch = V4L2_TYPE_IS_MULTIPLANAR(format->type) ? format->fmt.pix_mp.plane_fmt[0].bytesperline : format->fmt.pix.bytesperline;
 
-    layer->planes[1].object_index = 0;
-    layer->planes[1].offset = layer->planes[0].pitch * (V4L2_TYPE_IS_MULTIPLANAR(format->type) ? format->fmt.pix_mp.height : format->fmt.pix.height);
-    layer->planes[1].pitch = layer->planes[0].pitch;
+    if (!fourcc_mod_is_vendor(desc->objects[0].format_modifier, ARM)) {
+        layer->nb_planes = 2;
+        layer->planes[1].object_index = 0;
+        layer->planes[1].offset = layer->planes[0].pitch * (V4L2_TYPE_IS_MULTIPLANAR(format->type) ? format->fmt.pix_mp.height : format->fmt.pix.height);
+        layer->planes[1].pitch = layer->planes[0].pitch;
+    }
 
     return 0;
 }
