@@ -439,6 +439,10 @@ enum AVPixelFormat {
      */
     AV_PIX_FMT_D3D12,
 
+    AV_PIX_FMT_NV15,        ///< packed planar YUV 4:2:0, 15bpp, 1 plane for Y and 1 plane for the UV components, which are interleaved (first component U and the following component V), no padding between components
+    AV_PIX_FMT_NV20BS,      ///< packed planar YUV 4:2:2, 20bpp, 1 plane for Y and 1 plane for the UV components, which are interleaved (first component U and the following component V), no padding between components
+    AV_PIX_FMT_NV30,        ///< packed planar YUV 4:4:4, 30bpp, 1 plane for Y and 1 plane for the UV components, which are interleaved (first component U and the following component V), no padding between components
+
     AV_PIX_FMT_NB         ///< number of pixel formats, DO NOT USE THIS if you want to link with shared libav* because the number of formats might differ between versions
 };
 
