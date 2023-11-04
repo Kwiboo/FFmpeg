@@ -70,6 +70,8 @@ int image_get_linesize(int width, int plane,
 
     if (desc->flags & AV_PIX_FMT_FLAG_BITSTREAM)
         linesize = (linesize + 7) >> 3;
+    if (desc->flags & AV_PIX_FMT_FLAG_10BIT_NO_PADDING)
+        linesize = linesize * 5 / 4;
     return linesize;
 }
 
