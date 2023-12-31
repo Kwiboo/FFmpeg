@@ -764,6 +764,7 @@ int ff_v4l2_request_init(AVCodecContext *avctx, uint32_t pixelformat, uint32_t b
     struct udev_list_entry *devices;
     struct udev_list_entry *entry;
     struct udev_device *device;
+    const char *sysname;
 
     av_log(avctx, AV_LOG_DEBUG, "%s: ctx=%p hw_device_ctx=%p hw_frames_ctx=%p\n", __func__, ctx, avctx->hw_device_ctx, avctx->hw_frames_ctx);
 
@@ -786,6 +787,9 @@ int ff_v4l2_request_init(AVCodecContext *avctx, uint32_t pixelformat, uint32_t b
     }
 
     udev_enumerate_add_match_subsystem(enumerate, "media");
+    sysname = getenv("V4L2_SYSNAME");
+    if (sysname)
+        udev_enumerate_add_match_sysname(enumerate, sysname);
     udev_enumerate_scan_devices(enumerate);
 
     devices = udev_enumerate_get_list_entry(enumerate);
