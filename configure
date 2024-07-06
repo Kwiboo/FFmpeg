@@ -3165,6 +3165,8 @@ av1_dxva2_hwaccel_deps="dxva2 DXVA_PicParams_AV1"
 av1_dxva2_hwaccel_select="av1_decoder"
 av1_nvdec_hwaccel_deps="nvdec CUVIDAV1PICPARAMS"
 av1_nvdec_hwaccel_select="av1_decoder"
+av1_v4l2request_hwaccel_deps="v4l2_request av1_v4l2_request"
+av1_v4l2request_hwaccel_select="av1_decoder"
 av1_vaapi_hwaccel_deps="vaapi VADecPictureParameterBufferAV1_bit_depth_idx"
 av1_vaapi_hwaccel_select="av1_decoder"
 av1_vdpau_hwaccel_deps="vdpau VdpPictureInfoAV1"
@@ -7183,6 +7185,7 @@ fi
 if enabled v4l2_request; then
     check_pkg_config libudev libudev libudev.h udev_new
     check_func_headers "linux/media.h linux/videodev2.h" v4l2_timeval_to_ns
+    check_cc av1_v4l2_request linux/videodev2.h "int i = V4L2_PIX_FMT_AV1_FRAME;"
     check_cc h264_v4l2_request linux/videodev2.h "int i = V4L2_PIX_FMT_H264_SLICE;"
     check_cc hevc_v4l2_request linux/videodev2.h "int i = V4L2_PIX_FMT_HEVC_SLICE;"
     check_cc mpeg2_v4l2_request linux/videodev2.h "int i = V4L2_PIX_FMT_MPEG2_SLICE;"
