@@ -566,6 +566,18 @@ static const AVPixFmtDescriptor av_pix_fmt_descriptors[AV_PIX_FMT_NB] = {
         },
         .flags = AV_PIX_FMT_FLAG_PLANAR,
     },
+    [AV_PIX_FMT_NV12_SAND128] = {
+        .name = "nv12_sand128",
+        .nb_components = 3,
+        .log2_chroma_w = 1,
+        .log2_chroma_h = 1,
+        .comp = {
+            { 0, 1, 0, 0, 8 },        /* Y */
+            { 1, 2, 0, 0, 8 },        /* U */
+            { 1, 2, 1, 0, 8 },        /* V */
+        },
+        .flags = AV_PIX_FMT_FLAG_PLANAR,
+    },
     [AV_PIX_FMT_NV21] = {
         .name = "nv21",
         .nb_components = 3,
