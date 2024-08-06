@@ -244,7 +244,11 @@ static AVBufferRef *v4l2_request_frame_alloc(void *opaque, size_t size)
         return NULL;
     }
 
-    // TODO: Set AVDRMFrameDescriptor of this AVFrame
+    // Set AVDRMFrameDescriptor of this AVFrame
+    if (ff_v4l2_request_set_drm_descriptor(desc, &ctx->format) < 0) {
+        av_buffer_unref(&ref);
+        return NULL;
+    }
 
     return ref;
 }
@@ -261,8 +265,7 @@ int ff_v4l2_request_frame_params(AVCodecContext *avctx,
     AVHWFramesContext *hwfc = (AVHWFramesContext *)hw_frames_ctx->data;
 
     hwfc->format = AV_PIX_FMT_DRM_PRIME;
-    // TODO: Set sw_format based on capture buffer format
-    hwfc->sw_format = AV_PIX_FMT_NONE;
+    hwfc->sw_format = ff_v4l2_request_get_sw_format(&ctx->format);
 
     if (V4L2_TYPE_IS_MULTIPLANAR(ctx->format.type)) {
         hwfc->width = ctx->format.fmt.pix_mp.width;
@@ -413,6 +416,7 @@ int ff_v4l2_request_init(AVCodecContext *avctx,
 {
     V4L2RequestContext *ctx = v4l2_request_context(avctx);
     AVV4L2RequestDeviceContext *hwctx = NULL;
+    int ret;
 
     // Set initial default values
     ctx->av_class = &v4l2_request_context_class;
@@ -428,7 +432,13 @@ int ff_v4l2_request_init(AVCodecContext *avctx,
         }
     }
 
-    // TODO: Probe for a capable media and video device
+    // Probe for a capable media and video device for the V4L2 codec pixelformat
+    ret = ff_v4l2_request_probe(avctx, pixelformat, buffersize, control, count);
+    if (ret < 0) {
+        av_log(avctx, AV_LOG_INFO, "No V4L2 video device found for %s\n",
+               av_fourcc2str(pixelformat));
+        return ret;
+    }
 
     // Transfer (or return) ownership of media device file descriptor to hwdevice
     if (hwctx) {
