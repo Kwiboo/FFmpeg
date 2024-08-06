@@ -278,6 +278,7 @@ Hardware acceleration:
   d3d11va*                              Steve Lhomme
   d3d12va_encode*                       Tong Wu
   mediacodec*                           Matthieu Bouron, Aman Gupta, Zhao Zhili
+  v4l2_request*                         Jonas Karlman (CC jonas@kwiboo.se)
   vaapi*                                Haihao Xiang
   vaapi_encode*                         Mark Thompson, Haihao Xiang
   vdpau*                                Philip Langdale, Carl Eugen Hoyos
