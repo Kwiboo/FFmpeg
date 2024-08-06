@@ -359,7 +359,7 @@ External library support:
   --enable-omx-rpi         enable OpenMAX IL code for Raspberry Pi [no]
   --enable-rkmpp           enable Rockchip Media Process Platform code [no]
   --disable-v4l2-m2m       disable V4L2 mem2mem code [autodetect]
-  --enable-v4l2-request    enable V4L2 Request API code [no]
+  --disable-v4l2-request   disable V4L2 Request API code [autodetect]
   --disable-vaapi          disable Video Acceleration API (mainly Unix/Intel) code [autodetect]
   --disable-vdpau          disable Nvidia Video Decode and Presentation API for Unix code [autodetect]
   --disable-videotoolbox   disable VideoToolbox code [autodetect]
@@ -2006,6 +2006,7 @@ HWACCEL_AUTODETECT_LIBRARY_LIST="
     videotoolbox
     vulkan
     v4l2_m2m
+    v4l2_request
 "
 
 # catchall list of things that require external libs to link
@@ -2027,7 +2028,6 @@ HWACCEL_LIBRARY_LIST="
     mmal
     omx
     opencl
-    v4l2_request
 "
 
 DOCUMENT_LIST="
@@ -3232,6 +3232,8 @@ mpeg2_dxva2_hwaccel_deps="dxva2"
 mpeg2_dxva2_hwaccel_select="mpeg2video_decoder"
 mpeg2_nvdec_hwaccel_deps="nvdec"
 mpeg2_nvdec_hwaccel_select="mpeg2video_decoder"
+mpeg2_v4l2request_hwaccel_deps="v4l2_request mpeg2_v4l2_request"
+mpeg2_v4l2request_hwaccel_select="mpeg2video_decoder"
 mpeg2_vaapi_hwaccel_deps="vaapi"
 mpeg2_vaapi_hwaccel_select="mpeg2video_decoder"
 mpeg2_vdpau_hwaccel_deps="vdpau"
@@ -7202,6 +7204,7 @@ if enabled v4l2_m2m; then
 fi
 
 if enabled v4l2_request; then
+    check_cc mpeg2_v4l2_request linux/videodev2.h "int i = V4L2_CID_STATELESS_MPEG2_SEQUENCE"
     check_cc v4l2_m2m_hold_capture_buf linux/videodev2.h "int i = V4L2_BUF_FLAG_M2M_HOLD_CAPTURE_BUF"
     check_func_headers "linux/media.h linux/videodev2.h" v4l2_timeval_to_ns
     check_pkg_config libudev libudev libudev.h udev_new
