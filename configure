@@ -3186,6 +3186,8 @@ h264_dxva2_hwaccel_deps="dxva2"
 h264_dxva2_hwaccel_select="h264_decoder"
 h264_nvdec_hwaccel_deps="nvdec"
 h264_nvdec_hwaccel_select="h264_decoder"
+h264_v4l2request_hwaccel_deps="v4l2_request h264_v4l2_request"
+h264_v4l2request_hwaccel_select="h264_decoder"
 h264_vaapi_hwaccel_deps="vaapi"
 h264_vaapi_hwaccel_select="h264_decoder"
 h264_vdpau_hwaccel_deps="vdpau"
@@ -7204,6 +7206,7 @@ if enabled v4l2_m2m; then
 fi
 
 if enabled v4l2_request; then
+    check_cc h264_v4l2_request linux/videodev2.h "int i = V4L2_CID_STATELESS_H264_DECODE_MODE"
     check_cc mpeg2_v4l2_request linux/videodev2.h "int i = V4L2_CID_STATELESS_MPEG2_SEQUENCE"
     check_cc v4l2_m2m_hold_capture_buf linux/videodev2.h "int i = V4L2_BUF_FLAG_M2M_HOLD_CAPTURE_BUF"
     check_func_headers "linux/media.h linux/videodev2.h" v4l2_timeval_to_ns

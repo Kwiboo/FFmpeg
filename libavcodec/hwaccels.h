@@ -34,6 +34,7 @@ extern const struct FFHWAccel ff_h264_d3d11va2_hwaccel;
 extern const struct FFHWAccel ff_h264_d3d12va_hwaccel;
 extern const struct FFHWAccel ff_h264_dxva2_hwaccel;
 extern const struct FFHWAccel ff_h264_nvdec_hwaccel;
+extern const struct FFHWAccel ff_h264_v4l2request_hwaccel;
 extern const struct FFHWAccel ff_h264_vaapi_hwaccel;
 extern const struct FFHWAccel ff_h264_vdpau_hwaccel;
 extern const struct FFHWAccel ff_h264_videotoolbox_hwaccel;
