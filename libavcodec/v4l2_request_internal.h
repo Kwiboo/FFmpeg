@@ -39,4 +39,13 @@ static inline V4L2RequestFrameDescriptor *v4l2_request_framedesc(AVFrame *frame)
     return (V4L2RequestFrameDescriptor *)frame->data[0];
 }
 
+enum AVPixelFormat ff_v4l2_request_get_sw_format(struct v4l2_format *format);
+
+int ff_v4l2_request_set_drm_descriptor(V4L2RequestFrameDescriptor *framedesc,
+                                       struct v4l2_format *format);
+
+int ff_v4l2_request_probe(AVCodecContext *avctx, uint32_t pixelformat,
+                          uint32_t buffersize, struct v4l2_ext_control *control,
+                          int count);
+
 #endif /* AVCODEC_V4L2_REQUEST_INTERNAL_H */

@@ -1966,6 +1966,7 @@ EXTERNAL_LIBRARY_LIST="
     libtorch
     libtwolame
     libuavs3d
+    libudev
     libv4l2
     libvmaf
     libvorbis
@@ -3148,7 +3149,7 @@ dxva2_deps="dxva2api_h DXVA2_ConfigPictureDecode ole32 user32"
 ffnvcodec_deps_any="libdl LoadLibrary"
 mediacodec_deps="android mediandk"
 nvdec_deps="ffnvcodec"
-v4l2_request_deps="linux_media_h v4l2_timeval_to_ns"
+v4l2_request_deps="linux_media_h v4l2_timeval_to_ns libdrm libudev"
 vaapi_x11_deps="xlib_x11"
 videotoolbox_hwaccel_deps="videotoolbox pthreads"
 videotoolbox_hwaccel_extralibs="-framework QuartzCore"
@@ -7202,6 +7203,7 @@ fi
 
 if enabled v4l2_request; then
     check_func_headers "linux/media.h linux/videodev2.h" v4l2_timeval_to_ns
+    check_pkg_config libudev libudev libudev.h udev_new
 fi
 
 check_headers sys/videoio.h
