@@ -26,6 +26,7 @@
 #include <unistd.h>
 
 #include <drm_fourcc.h>
+#include <libudev.h>
 
 #include "avassert.h"
 #include "hwcontext_drm.h"
@@ -33,7 +34,16 @@
 #include "hwcontext_v4l2request_internal.h"
 #include "mem.h"
 
+typedef struct V4L2RequestVideoDecoder {
+    dev_t media_dev;
+    dev_t video_dev;
+    uint32_t *pixelformats;
+    int nb_pixelformats;
+} V4L2RequestVideoDecoder;
+
 typedef struct V4L2RequestDeviceContext {
+    V4L2RequestVideoDecoder *decoders;
+    int nb_decoders;
 } V4L2RequestDeviceContext;
 
 typedef struct V4L2RequestFramesContext {
@@ -138,25 +148,524 @@ static int v4l2request_set_drm_descriptor(AVDRMFrameDescriptor *desc,
 
 static void v4l2request_device_uninit(AVHWDeviceContext *hwdev)
 {
+    V4L2RequestDeviceContext *hwctx = hwdev->hwctx;
+
+    av_freep(&hwctx->decoders);
+    hwctx->nb_decoders = 0;
 }
 
 static int v4l2request_device_create(AVHWDeviceContext *hwdev, const char *device,
                                      AVDictionary *opts, int flags)
 {
+    V4L2RequestDeviceContext *hwctx = hwdev->hwctx;
+
+    hwctx->decoders = NULL;
+    hwctx->nb_decoders = 0;
+
+    // TODO: enumerate V4L2 Request API capable video decoders
+    //       and fill hwctx->decoders and hwctx->nb_decoders,
+    //       limit to decoders for the media 'device' when specified
+
     return 0;
+}
+
+static int v4l2request_set_format(AVHWFramesContext *hwfc,
+                                  enum v4l2_buf_type type,
+                                  uint32_t pixelformat,
+                                  uint32_t buffersize)
+{
+    AVV4L2RequestFramesContext *fctx = hwfc->hwctx;
+    AVV4L2RequestFramesContextInternal *fctxi = fctx->internal;
+    struct v4l2_format format = {
+        .type = type,
+    };
+
+    if (V4L2_TYPE_IS_MULTIPLANAR(type)) {
+        format.fmt.pix_mp.width = hwfc->width;
+        format.fmt.pix_mp.height = hwfc->height;
+        format.fmt.pix_mp.pixelformat = pixelformat;
+        format.fmt.pix_mp.plane_fmt[0].sizeimage = buffersize;
+        format.fmt.pix_mp.num_planes = 1;
+    } else {
+        format.fmt.pix.width = hwfc->width;
+        format.fmt.pix.height = hwfc->height;
+        format.fmt.pix.pixelformat = pixelformat;
+        format.fmt.pix.sizeimage = buffersize;
+    }
+
+    if (ioctl(fctxi->video_fd, VIDIOC_S_FMT, &format) < 0)
+        return AVERROR(errno);
+
+    return 0;
+}
+
+static int v4l2request_select_capture_format(AVHWFramesContext *hwfc)
+{
+    AVV4L2RequestFramesContext *fctx = hwfc->hwctx;
+    AVV4L2RequestFramesContextInternal *fctxi = fctx->internal;
+    enum v4l2_buf_type type = fctxi->capture.format.type;
+    uint32_t pixelformat, fallback = 0;
+    struct v4l2_format format = {
+        .type = type,
+    };
+    struct v4l2_fmtdesc fmtdesc = {
+        .index = 0,
+        .type = type,
+    };
+
+    // Get the driver preferred (or default) format
+    if (ioctl(fctxi->video_fd, VIDIOC_G_FMT, &format) < 0)
+        return AVERROR(errno);
+
+    pixelformat = V4L2_TYPE_IS_MULTIPLANAR(type) ?
+                  format.fmt.pix_mp.pixelformat :
+                  format.fmt.pix.pixelformat;
+
+    // Try to use the driver preferred format when it is a known format
+    for (int i = 0; i < FF_ARRAY_ELEMS(v4l2request_capture_pixelformats); i++) {
+        if (pixelformat == v4l2request_capture_pixelformats[i].pixelformat &&
+            (fctx->bit_depth == v4l2request_capture_pixelformats[i].bit_depth ||
+             !fctx->bit_depth))
+            return v4l2request_set_format(hwfc, type, pixelformat, 0);
+    }
+
+    // Next try to use the first known format with matching bit depth
+    while (ioctl(fctxi->video_fd, VIDIOC_ENUM_FMT, &fmtdesc) >= 0) {
+        for (int i = 0; i < FF_ARRAY_ELEMS(v4l2request_capture_pixelformats); i++) {
+            if (fmtdesc.pixelformat == v4l2request_capture_pixelformats[i].pixelformat) {
+                if (fctx->bit_depth == v4l2request_capture_pixelformats[i].bit_depth ||
+                    !fctx->bit_depth)
+                    return v4l2request_set_format(hwfc, type, fmtdesc.pixelformat, 0);
+                else if (!fallback)
+                    fallback = fmtdesc.pixelformat;
+            }
+        }
+
+        fmtdesc.index++;
+    }
+
+    // Fallback to use the first known format
+    if (fallback)
+        return v4l2request_set_format(hwfc, type, fallback, 0);
+
+    return AVERROR(errno);
+}
+
+static int v4l2request_try_framesize(AVHWFramesContext *hwfc,
+                                     uint32_t pixelformat)
+{
+    AVV4L2RequestFramesContext *fctx = hwfc->hwctx;
+    AVV4L2RequestFramesContextInternal *fctxi = fctx->internal;
+    struct v4l2_frmsizeenum frmsize = {
+        .index = 0,
+        .pixel_format = pixelformat,
+    };
+
+    // Enumerate and check if frame size is supported
+    while (ioctl(fctxi->video_fd, VIDIOC_ENUM_FRAMESIZES, &frmsize) >= 0) {
+        if (frmsize.type == V4L2_FRMSIZE_TYPE_DISCRETE &&
+            hwfc->width == frmsize.discrete.width &&
+            hwfc->height == frmsize.discrete.height) {
+            return 0;
+        } else if ((frmsize.type == V4L2_FRMSIZE_TYPE_STEPWISE ||
+                    frmsize.type == V4L2_FRMSIZE_TYPE_CONTINUOUS) &&
+                   hwfc->width >= frmsize.stepwise.min_width &&
+                   hwfc->height >= frmsize.stepwise.min_height &&
+                   hwfc->width <= frmsize.stepwise.max_width &&
+                   hwfc->height <= frmsize.stepwise.max_height) {
+            return 0;
+        }
+
+        frmsize.index++;
+    }
+
+    return AVERROR(errno);
+}
+
+static int v4l2request_try_format(AVHWFramesContext *hwfc,
+                                  enum v4l2_buf_type type,
+                                  uint32_t pixelformat)
+{
+    AVV4L2RequestFramesContext *fctx = hwfc->hwctx;
+    AVV4L2RequestFramesContextInternal *fctxi = fctx->internal;
+    struct v4l2_fmtdesc fmtdesc = {
+        .index = 0,
+        .type = type,
+    };
+
+    // Enumerate and check if format is supported
+    while (ioctl(fctxi->video_fd, VIDIOC_ENUM_FMT, &fmtdesc) >= 0) {
+        if (fmtdesc.pixelformat == pixelformat)
+            return 0;
+
+        fmtdesc.index++;
+    }
+
+    return AVERROR(errno);
+}
+
+static int v4l2request_set_controls(AVHWFramesContext *hwfc,
+                                    struct v4l2_ext_control *control, int count)
+{
+    AVV4L2RequestFramesContext *fctx = hwfc->hwctx;
+    AVV4L2RequestFramesContextInternal *fctxi = fctx->internal;
+    struct v4l2_ext_controls controls = {
+        .controls = control,
+        .count = count,
+    };
+
+    if (!control || !count)
+        return 0;
+
+    if (ioctl(fctxi->video_fd, VIDIOC_S_EXT_CTRLS, &controls) < 0)
+        return AVERROR(errno);
+
+    return 0;
+}
+
+static int v4l2request_probe_video_device(AVHWFramesContext *hwfc,
+                                          const char *path,
+                                          uint32_t pixelformat,
+                                          uint32_t buffersize)
+{
+    AVV4L2RequestFramesContext *fctx = hwfc->hwctx;
+    AVV4L2RequestFramesContextInternal *fctxi = fctx->internal;
+    struct v4l2_capability capability;
+    struct v4l2_create_buffers buffers;
+    unsigned int capabilities;
+    int ret;
+
+    /*
+     * Open video device in non-blocking mode to support decoding using
+     * multiple queued requests, required for e.g. multi stage decoding.
+     */
+    fctxi->video_fd = open(path, O_RDWR | O_NONBLOCK);
+    if (fctxi->video_fd < 0) {
+        ret = AVERROR(errno);
+        av_log(hwfc, AV_LOG_ERROR, "Failed to open video device %s: %s (%d)\n",
+               path, strerror(errno), errno);
+        return ret;
+    }
+
+    // Query capabilities of the video device
+    if (ioctl(fctxi->video_fd, VIDIOC_QUERYCAP, &capability) < 0) {
+        ret = AVERROR(errno);
+        av_log(hwfc, AV_LOG_ERROR, "Failed to query capabilities of %s: %s (%d)\n",
+               path, strerror(errno), errno);
+        goto fail;
+    }
+
+    // Use device capabilities of the opened device when supported
+    capabilities = (capability.capabilities & V4L2_CAP_DEVICE_CAPS) ?
+                   capability.device_caps : capability.capabilities;
+
+    // Ensure streaming is supported on the video device
+    if ((capabilities & V4L2_CAP_STREAMING) != V4L2_CAP_STREAMING) {
+        ret = AVERROR(EINVAL);
+        av_log(hwfc, AV_LOG_VERBOSE, "Device %s is missing streaming capability\n", path);
+        goto fail;
+    }
+
+    // Ensure multi- or single-planar API can be used
+    if ((capabilities & V4L2_CAP_VIDEO_M2M_MPLANE) == V4L2_CAP_VIDEO_M2M_MPLANE) {
+        fctxi->output.format.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+        fctxi->capture.format.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+    } else if ((capabilities & V4L2_CAP_VIDEO_M2M) == V4L2_CAP_VIDEO_M2M) {
+        fctxi->output.format.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+        fctxi->capture.format.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    } else {
+        ret = AVERROR(EINVAL);
+        av_log(hwfc, AV_LOG_VERBOSE, "Device %s is missing mem2mem capability\n", path);
+        goto fail;
+    }
+
+    // Query OUTPUT buffer capabilities
+    buffers = (struct v4l2_create_buffers) {
+        .count = 0,
+        .memory = V4L2_MEMORY_MMAP,
+        .format.type = fctxi->output.format.type,
+    };
+    if (ioctl(fctxi->video_fd, VIDIOC_CREATE_BUFS, &buffers) < 0) {
+        ret = AVERROR(errno);
+        av_log(hwfc, AV_LOG_ERROR,
+               "Failed to query OUTPUT buffer capabilities of %s: %s (%d)\n",
+               path, strerror(errno), errno);
+        goto fail;
+    }
+    fctxi->output.capabilities = buffers.capabilities;
+
+    // Ensure requests can be used
+    if ((buffers.capabilities & V4L2_BUF_CAP_SUPPORTS_REQUESTS) !=
+        V4L2_BUF_CAP_SUPPORTS_REQUESTS) {
+        ret = AVERROR(EINVAL);
+        av_log(hwfc, AV_LOG_VERBOSE, "Device %s is missing support for requests\n", path);
+        goto fail;
+    }
+
+    // Ensure the codec pixelformat can be used
+    ret = v4l2request_try_format(hwfc, fctxi->output.format.type, pixelformat);
+    if (ret < 0) {
+        av_log(hwfc, AV_LOG_VERBOSE, "Device %s is missing support for pixelformat %s\n",
+               path, av_fourcc2str(pixelformat));
+        goto fail;
+    }
+
+    // Ensure frame size is supported, when driver support ENUM_FRAMESIZES
+    ret = v4l2request_try_framesize(hwfc, pixelformat);
+    if (ret < 0 && ret != AVERROR(ENOTTY)) {
+        av_log(hwfc, AV_LOG_VERBOSE,
+               "Device %s is missing support for frame size %dx%d of pixelformat %s\n",
+               path, hwfc->width, hwfc->height, av_fourcc2str(pixelformat));
+        goto fail;
+    }
+
+    // Set the codec pixelformat and OUTPUT buffersize to be used
+    ret = v4l2request_set_format(hwfc, fctxi->output.format.type, pixelformat, buffersize);
+    if (ret < 0) {
+        av_log(hwfc, AV_LOG_ERROR,
+               "Failed to set OUTPUT pixelformat %s of %s: %s (%d)\n",
+               av_fourcc2str(pixelformat), path, strerror(errno), errno);
+        goto fail;
+    }
+
+    // Get format details for OUTPUT buffers
+    if (ioctl(fctxi->video_fd, VIDIOC_G_FMT, &fctxi->output.format) < 0) {
+        ret = AVERROR(errno);
+        av_log(hwfc, AV_LOG_ERROR, "Failed to get OUTPUT format: %s (%d)\n",
+               strerror(errno), errno);
+        goto fail;
+    }
+
+    /*
+     * Set any codec specific controls that can help assist the driver
+     * make a decision on what CAPTURE buffer format can be used.
+     */
+    ret = v4l2request_set_controls(hwfc, fctx->init_controls, fctx->nb_init_controls);
+    if (ret < 0) {
+        av_log(hwfc, AV_LOG_VERBOSE,
+               "Failed to set %d control(s): %s (%d)\n",
+               fctx->nb_init_controls, strerror(errno), errno);
+        goto fail;
+    }
+
+    // Select a supported CAPTURE buffer format
+    ret = v4l2request_select_capture_format(hwfc);
+    if (ret < 0) {
+        av_log(hwfc, AV_LOG_VERBOSE,
+               "Failed to select a CAPTURE format %s of %s: %s (%d)\n",
+               av_fourcc2str(pixelformat), path, strerror(errno), errno);
+        goto fail;
+    }
+
+    // Query CAPTURE buffer capabilities
+    buffers = (struct v4l2_create_buffers) {
+        .count = 0,
+        .memory = V4L2_MEMORY_MMAP,
+        .format.type = fctxi->capture.format.type,
+    };
+    if (ioctl(fctxi->video_fd, VIDIOC_CREATE_BUFS, &buffers) < 0) {
+        ret = AVERROR(errno);
+        av_log(hwfc, AV_LOG_ERROR,
+               "Failed to query CAPTURE buffer capabilities of %s: %s (%d)\n",
+               path, strerror(errno), errno);
+        goto fail;
+    }
+    fctxi->capture.capabilities = buffers.capabilities;
+
+    // Get format details for CAPTURE buffers
+    if (ioctl(fctxi->video_fd, VIDIOC_G_FMT, &fctxi->capture.format) < 0) {
+        ret = AVERROR(errno);
+        av_log(hwfc, AV_LOG_ERROR, "Failed to get CAPTURE format: %s (%d)\n",
+               strerror(errno), errno);
+        goto fail;
+    }
+
+    // All tests passed, video device should be capable
+    return 0;
+
+fail:
+    if (fctxi->video_fd >= 0) {
+        close(fctxi->video_fd);
+        fctxi->video_fd = -1;
+    }
+    return ret;
+}
+
+static int v4l2request_probe_video_devices(AVHWFramesContext *hwfc,
+                                           struct udev *udev,
+                                           uint32_t pixelformat,
+                                           uint32_t buffersize)
+{
+    AVV4L2RequestFramesContext *fctx = hwfc->hwctx;
+    AVV4L2RequestFramesContextInternal *fctxi = fctx->internal;
+    struct media_device_info device_info;
+    struct media_v2_topology topology = {0};
+    struct media_v2_interface *interfaces;
+    struct udev_device *device;
+    const char *path;
+    dev_t devnum;
+    int ret;
+
+    if (ioctl(fctxi->media_fd, MEDIA_IOC_DEVICE_INFO, &device_info) < 0)
+        return AVERROR(errno);
+
+    if (ioctl(fctxi->media_fd, MEDIA_IOC_G_TOPOLOGY, &topology) < 0) {
+        ret = AVERROR(errno);
+        av_log(hwfc, AV_LOG_ERROR, "Failed to get media topology: %s (%d)\n",
+               strerror(errno), errno);
+        return ret;
+    }
+
+    if (!topology.num_interfaces)
+        return AVERROR(ENOENT);
+
+    interfaces = av_calloc(topology.num_interfaces, sizeof(struct media_v2_interface));
+    if (!interfaces)
+        return AVERROR(ENOMEM);
+
+    topology.ptr_interfaces = (__u64)(uintptr_t)interfaces;
+    if (ioctl(fctxi->media_fd, MEDIA_IOC_G_TOPOLOGY, &topology) < 0) {
+        ret = AVERROR(errno);
+        av_log(hwfc, AV_LOG_ERROR, "Failed to get media topology: %s (%d)\n",
+               strerror(errno), errno);
+        goto fail;
+    }
+
+    ret = AVERROR(ENOENT);
+    for (int i = 0; i < topology.num_interfaces; i++) {
+        if (interfaces[i].intf_type != MEDIA_INTF_T_V4L_VIDEO)
+            continue;
+
+        devnum = makedev(interfaces[i].devnode.major, interfaces[i].devnode.minor);
+        device = udev_device_new_from_devnum(udev, 'c', devnum);
+        if (!device)
+            continue;
+
+        path = udev_device_get_devnode(device);
+        if (path)
+            ret = v4l2request_probe_video_device(hwfc, path, pixelformat, buffersize);
+        udev_device_unref(device);
+
+        // Stop when we have found a capable video device
+        if (!ret) {
+            av_log(hwfc, AV_LOG_INFO,
+                   "Using V4L2 media driver %s (%u.%u.%u) for %s\n",
+                   device_info.driver,
+                   device_info.driver_version >> 16,
+                   (device_info.driver_version >> 8) & 0xff,
+                   device_info.driver_version & 0xff,
+                   av_fourcc2str(pixelformat));
+            break;
+        }
+    }
+
+fail:
+    av_free(interfaces);
+    return ret;
+}
+
+static int v4l2request_probe_media_device(AVHWFramesContext *hwfc,
+                                          struct udev_device *device,
+                                          uint32_t pixelformat,
+                                          uint32_t buffersize)
+{
+    AVV4L2RequestFramesContext *fctx = hwfc->hwctx;
+    AVV4L2RequestFramesContextInternal *fctxi = fctx->internal;
+    const char *path;
+    int ret;
+
+    path = udev_device_get_devnode(device);
+    if (!path)
+        return AVERROR(ENODEV);
+
+    // Open enumerated media device
+    fctxi->media_fd = open(path, O_RDWR);
+    if (fctxi->media_fd < 0) {
+        ret = AVERROR(errno);
+        av_log(hwfc, AV_LOG_ERROR, "Failed to open media device %s: %s (%d)\n",
+               path, strerror(errno), errno);
+        return ret;
+    }
+
+    // Probe video devices of current media device
+    ret = v4l2request_probe_video_devices(hwfc, udev_device_get_udev(device),
+                                          pixelformat, buffersize);
+
+    // Cleanup when no capable video device was found
+    if (ret < 0) {
+        close(fctxi->media_fd);
+        fctxi->media_fd = -1;
+    }
+
+    return ret;
+}
+
+static int v4l2request_probe_media_devices(AVHWFramesContext *hwfc,
+                                           struct udev *udev,
+                                           uint32_t pixelformat,
+                                           uint32_t buffersize)
+{
+    struct udev_enumerate *enumerate;
+    struct udev_list_entry *devices;
+    struct udev_list_entry *entry;
+    struct udev_device *device;
+    int ret;
+
+    enumerate = udev_enumerate_new(udev);
+    if (!enumerate)
+        return AVERROR(ENOMEM);
+
+    udev_enumerate_add_match_subsystem(enumerate, "media");
+    udev_enumerate_scan_devices(enumerate);
+    devices = udev_enumerate_get_list_entry(enumerate);
+
+    ret = AVERROR(ENOENT);
+    udev_list_entry_foreach(entry, devices) {
+        const char *path = udev_list_entry_get_name(entry);
+        if (!path)
+            continue;
+
+        device = udev_device_new_from_syspath(udev, path);
+        if (!device)
+            continue;
+
+        // Probe media device for a capable video device
+        ret = v4l2request_probe_media_device(hwfc, device, pixelformat, buffersize);
+        udev_device_unref(device);
+
+        // Stop when we have found a capable media and video device
+        if (!ret)
+            break;
+    }
+
+    udev_enumerate_unref(enumerate);
+    return ret;
 }
 
 static int v4l2request_open_decoder(AVHWFramesContext *hwfc)
 {
     AVV4L2RequestFramesContext *fctx = hwfc->hwctx;
+    uint32_t buffersize;
+    struct udev *udev;
+    int ret;
 
     // Ensure codec pixelformat is set
     if (!fctx->pixelformat)
         return AVERROR(EINVAL);
 
-    // TODO: locate a decoder supporting the requested pixelformat
+    // FIXME: locate a decoder using hwdevice context decoders
 
-    return AVERROR(ENOSYS);
+    udev = udev_new();
+    if (!udev)
+        return AVERROR(ENOMEM);
+
+    buffersize = FFMAX(hwfc->width * hwfc->height * 3 / 2, 256 * 1024);
+
+    // Probe all media devices (auto-detection)
+    ret = v4l2request_probe_media_devices(hwfc, udev, fctx->pixelformat, buffersize);
+
+    udev_unref(udev);
+    return ret;
 }
 
 static AVBufferRef *v4l2request_v4l2_buffer_alloc(AVHWFramesContext *hwfc,

@@ -1968,6 +1968,7 @@ EXTERNAL_LIBRARY_LIST="
     libtorch
     libtwolame
     libuavs3d
+    libudev
     libv4l2
     libvmaf
     libvorbis
@@ -3152,8 +3153,8 @@ dxva2_deps="dxva2api_h DXVA2_ConfigPictureDecode ole32 user32"
 ffnvcodec_deps_any="libdl LoadLibrary"
 mediacodec_deps="android mediandk"
 nvdec_deps="ffnvcodec"
-v4l2_request_deps="linux_media_h v4l2_timeval_to_ns libdrm"
-v4l2_request_suggest="libdrm"
+v4l2_request_deps="linux_media_h v4l2_timeval_to_ns libdrm libudev"
+v4l2_request_suggest="libdrm libudev"
 vaapi_x11_deps="xlib_x11"
 videotoolbox_hwaccel_deps="videotoolbox pthreads"
 videotoolbox_hwaccel_extralibs="-framework QuartzCore"
@@ -4052,7 +4053,7 @@ swscale_suggest="libm stdatomic"
 
 avcodec_extralibs="pthreads_extralibs iconv_extralibs dxva2_extralibs lcms2_extralibs"
 avfilter_extralibs="pthreads_extralibs"
-avutil_extralibs="d3d11va_extralibs d3d12va_extralibs mediacodec_extralibs nanosleep_extralibs pthreads_extralibs vaapi_drm_extralibs vaapi_x11_extralibs vaapi_win32_extralibs vdpau_x11_extralibs"
+avutil_extralibs="d3d11va_extralibs d3d12va_extralibs mediacodec_extralibs nanosleep_extralibs pthreads_extralibs v4l2_request_extralibs vaapi_drm_extralibs vaapi_x11_extralibs vaapi_win32_extralibs vdpau_x11_extralibs"
 
 # programs
 ffmpeg_deps="avcodec avfilter avformat threads"
@@ -7224,6 +7225,8 @@ fi
 
 if enabled v4l2_request; then
     check_func_headers "linux/media.h linux/videodev2.h" v4l2_timeval_to_ns
+    check_pkg_config libudev libudev libudev.h udev_new
+    v4l2_request_extralibs="$libudev_extralibs"
 fi
 
 check_headers sys/videoio.h
