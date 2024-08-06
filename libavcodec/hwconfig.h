@@ -79,6 +79,8 @@ void ff_hwaccel_uninit(AVCodecContext *avctx);
     HW_CONFIG_HWACCEL(0, 0, 1, D3D11VA_VLD,  NONE,         ff_ ## codec ## _d3d11va_hwaccel)
 #define HWACCEL_D3D12VA(codec) \
     HW_CONFIG_HWACCEL(1, 1, 0, D3D12,        D3D12VA,      ff_ ## codec ## _d3d12va_hwaccel)
+#define HWACCEL_V4L2REQUEST(codec) \
+    HW_CONFIG_HWACCEL(1, 0, 0, DRM_PRIME,    V4L2REQUEST,  ff_ ## codec ## _v4l2request_hwaccel)
 
 #define HW_CONFIG_ENCODER(device, frames, ad_hoc, format, device_type_) \
     &(const AVCodecHWConfigInternal) { \

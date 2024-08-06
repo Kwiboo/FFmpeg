@@ -303,7 +303,8 @@ int ff_v4l2_request_uninit(AVCodecContext *avctx)
     V4L2RequestContext *ctx = v4l2_request_context(avctx);
 
     if (ctx->video_fd >= 0) {
-        // TODO: Flush and wait on all pending requests
+        // Flush and wait on all pending requests
+        ff_v4l2_request_flush(avctx);
 
         // Stop output queue
         if (ioctl(ctx->video_fd, VIDIOC_STREAMOFF, &ctx->output_type) < 0) {
