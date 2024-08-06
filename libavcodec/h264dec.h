@@ -324,6 +324,7 @@ typedef struct H264SliceContext {
     MMCO mmco[H264_MAX_MMCO_COUNT];
     int  nb_mmco;
     int explicit_ref_marking;
+    int ref_pic_marking_bit_size;
 
     int frame_num;
     int idr_pic_id;
@@ -332,6 +333,7 @@ typedef struct H264SliceContext {
     int delta_poc[2];
     int curr_pic_num;
     int max_pic_num;
+    int pic_order_cnt_bit_size;
 } H264SliceContext;
 
 /**
