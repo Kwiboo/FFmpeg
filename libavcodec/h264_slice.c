@@ -791,6 +791,7 @@ static enum AVPixelFormat get_pixel_format(H264Context *h, int force_callback)
                      (CONFIG_H264_D3D11VA_HWACCEL * 2) + \
                      CONFIG_H264_D3D12VA_HWACCEL + \
                      CONFIG_H264_NVDEC_HWACCEL + \
+                     CONFIG_H264_V4L2REQUEST_HWACCEL + \
                      CONFIG_H264_VAAPI_HWACCEL + \
                      CONFIG_H264_VIDEOTOOLBOX_HWACCEL + \
                      CONFIG_H264_VDPAU_HWACCEL + \
@@ -816,6 +817,9 @@ static enum AVPixelFormat get_pixel_format(H264Context *h, int force_callback)
 #endif
 #if CONFIG_H264_VULKAN_HWACCEL
         *fmt++ = AV_PIX_FMT_VULKAN;
+#endif
+#if CONFIG_H264_V4L2REQUEST_HWACCEL
+        *fmt++ = AV_PIX_FMT_DRM_PRIME;
 #endif
         if (CHROMA444(h)) {
             if (h->avctx->colorspace == AVCOL_SPC_RGB) {
@@ -872,6 +876,9 @@ static enum AVPixelFormat get_pixel_format(H264Context *h, int force_callback)
 #if CONFIG_H264_VIDEOTOOLBOX_HWACCEL
         if (h->avctx->colorspace != AVCOL_SPC_RGB)
             *fmt++ = AV_PIX_FMT_VIDEOTOOLBOX;
+#endif
+#if CONFIG_H264_V4L2REQUEST_HWACCEL
+        *fmt++ = AV_PIX_FMT_DRM_PRIME;
 #endif
         if (CHROMA444(h)) {
             if (h->avctx->colorspace == AVCOL_SPC_RGB)
