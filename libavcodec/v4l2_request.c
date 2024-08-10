@@ -16,6 +16,8 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include "config.h"
+
 #include <drm_fourcc.h>
 #include <fcntl.h>
 #include <libudev.h>
@@ -27,9 +29,9 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#include "libavutil/hwcontext_v4l2request.h"
 #include "decode.h"
-#include "internal.h"
-#include "v4l2_request.h"
+#include "v4l2_request_internal.h"
 
 static const AVClass v4l2_request_context_class = {
     .class_name = "V4L2RequestContext",
@@ -103,20 +105,6 @@ int ff_v4l2_request_set_controls(AVCodecContext *avctx, struct v4l2_ext_control 
     ret = v4l2_request_controls(ctx, -1, VIDIOC_S_EXT_CTRLS, control, count);
     if (ret < 0) {
         av_log(avctx, AV_LOG_ERROR, "%s: set controls failed, %s (%d)\n", __func__, strerror(errno), errno);
-        return AVERROR(EINVAL);
-    }
-
-    return ret;
-}
-
-int ff_v4l2_request_get_controls(AVCodecContext *avctx, struct v4l2_ext_control *control, int count)
-{
-    V4L2RequestContext *ctx = avctx->internal->hwaccel_priv_data;
-    int ret;
-
-    ret = v4l2_request_controls(ctx, -1, VIDIOC_G_EXT_CTRLS, control, count);
-    if (ret < 0) {
-        av_log(avctx, AV_LOG_ERROR, "%s: get controls failed, %s (%d)\n", __func__, strerror(errno), errno);
         return AVERROR(EINVAL);
     }
 

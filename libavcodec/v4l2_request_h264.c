@@ -16,6 +16,8 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include "config.h"
+
 #include "h264dec.h"
 #include "hwconfig.h"
 #include "internal.h"
@@ -496,7 +498,9 @@ static int v4l2_request_h264_init(AVCodecContext *avctx)
 
     fill_sps(&sps, h);
 
-    ret = ff_v4l2_request_init(avctx, V4L2_PIX_FMT_H264_SLICE, 4 * 1024 * 1024, control, FF_ARRAY_ELEMS(control));
+    ret = ff_v4l2_request_init(avctx, V4L2_PIX_FMT_H264_SLICE,
+                               4 * 1024 * 1024,
+                               control, FF_ARRAY_ELEMS(control));
     if (ret)
         return ret;
 

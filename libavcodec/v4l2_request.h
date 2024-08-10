@@ -39,10 +39,12 @@ typedef struct V4L2RequestBuffer {
 
 typedef struct V4L2RequestContext {
     const AVClass *av_class;
+    AVBufferRef *device_ref;
     int media_fd;
     int video_fd;
     struct v4l2_format format;
     enum v4l2_buf_type output_type;
+    int (*post_probe)(AVCodecContext *avctx);
 } V4L2RequestContext;
 
 typedef struct V4L2RequestPictureContext {
@@ -50,20 +52,11 @@ typedef struct V4L2RequestPictureContext {
     V4L2RequestBuffer *capture;
 } V4L2RequestPictureContext;
 
-typedef struct V4L2RequestDescriptor {
-    AVDRMFrameDescriptor drm;
-    int request_fd;
-    V4L2RequestBuffer output;
-    V4L2RequestBuffer capture;
-} V4L2RequestDescriptor;
-
 int ff_v4l2_request_query_control(AVCodecContext *avctx,
                                   struct v4l2_query_ext_ctrl *control);
 
 int ff_v4l2_request_query_control_default_value(AVCodecContext *avctx,
                                                 uint32_t id);
-
-int ff_v4l2_request_get_controls(AVCodecContext *avctx, struct v4l2_ext_control *control, int count);
 
 int ff_v4l2_request_set_controls(AVCodecContext *avctx,
                                  struct v4l2_ext_control *control, int count);
