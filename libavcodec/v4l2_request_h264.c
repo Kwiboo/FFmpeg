@@ -484,9 +484,9 @@ static int v4l2_request_h264_post_probe(AVCodecContext *avctx)
 
 static int v4l2_request_h264_init(AVCodecContext *avctx)
 {
+    V4L2RequestContextH264 *ctx = avctx->internal->hwaccel_priv_data;
     const H264Context *h = avctx->priv_data;
     struct v4l2_ctrl_h264_sps sps;
-    int ret;
 
     struct v4l2_ext_control control[] = {
         {
@@ -498,13 +498,10 @@ static int v4l2_request_h264_init(AVCodecContext *avctx)
 
     fill_sps(&sps, h);
 
-    ret = ff_v4l2_request_init(avctx, V4L2_PIX_FMT_H264_SLICE,
-                               4 * 1024 * 1024,
-                               control, FF_ARRAY_ELEMS(control));
-    if (ret)
-        return ret;
-
-    return v4l2_request_h264_post_probe(avctx);
+    ctx->base.post_probe = v4l2_request_h264_post_probe;
+    return ff_v4l2_request_init(avctx, V4L2_PIX_FMT_H264_SLICE,
+                                4 * 1024 * 1024,
+                                control, FF_ARRAY_ELEMS(control));
 }
 
 const AVHWAccel ff_h264_v4l2request_hwaccel = {

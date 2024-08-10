@@ -117,6 +117,7 @@ static int v4l2_request_mpeg2_decode_slice(AVCodecContext *avctx,
                                            const uint8_t *buffer, uint32_t size)
 {
     const MpegEncContext *s = avctx->priv_data;
+    V4L2RequestControlsMPEG2 *controls = s->current_picture_ptr->hwaccel_picture_private;
 
     return ff_v4l2_request_append_output(avctx, s->current_picture_ptr->f, buffer, size);
 }

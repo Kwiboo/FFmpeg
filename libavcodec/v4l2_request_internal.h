@@ -50,6 +50,4 @@ int ff_v4l2_request_probe(AVCodecContext *avctx, uint32_t pixelformat,
                           uint32_t buffersize, struct v4l2_ext_control *control,
                           int count);
 
-int ff_v4l2_request_probe_media_device(struct udev_device *device, AVCodecContext *avctx, uint32_t pixelformat, uint32_t buffersize, struct v4l2_ext_control *control, int count);
-
 #endif /* AVCODEC_V4L2_REQUEST_INTERNAL_H */

@@ -19,12 +19,8 @@
 #include "config.h"
 
 #include <fcntl.h>
-#include <libudev.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
-#include <sys/stat.h>
-#include <sys/sysmacros.h>
-#include <sys/types.h>
 #include <unistd.h>
 
 #include "libavutil/hwcontext_v4l2request.h"
@@ -116,6 +112,7 @@ static int v4l2_request_buffer_alloc(V4L2RequestContext *ctx,
 
     av_log(ctx, AV_LOG_DEBUG, "%s: buf=%p type=%u\n", __func__, buf, type);
 
+    // Get format details for the buffer to be created
     if (ioctl(ctx->video_fd, VIDIOC_G_FMT, &buffers.format) < 0) {
         av_log(ctx, AV_LOG_ERROR, "Failed to get format of type %d: %s (%d)\n",
                type, strerror(errno), errno);
@@ -132,6 +129,7 @@ static int v4l2_request_buffer_alloc(V4L2RequestContext *ctx,
                av_fourcc2str(fmt->pixelformat), fmt->width, fmt->height, fmt->bytesperline, fmt->sizeimage);
     }
 
+    // Create the buffer
     if (ioctl(ctx->video_fd, VIDIOC_CREATE_BUFS, &buffers) < 0) {
         av_log(ctx, AV_LOG_ERROR, "Failed to create buffer of type %d: %s (%d)\n",
                type, strerror(errno), errno);
@@ -158,14 +156,21 @@ static int v4l2_request_buffer_alloc(V4L2RequestContext *ctx,
     buf->buffer.memory = V4L2_MEMORY_MMAP;
     buf->buffer.index = buf->index;
 
+    // Query more details of the created buffer
     if (ioctl(ctx->video_fd, VIDIOC_QUERYBUF, &buf->buffer) < 0) {
         av_log(ctx, AV_LOG_ERROR, "Failed to query buffer %d of type %d: %s (%d)\n",
                buf->index, type, strerror(errno), errno);
         return AVERROR(errno);
     }
 
+    /*
+     * Use buffer index as base for V4L2 frame reference.
+     * This works because a capture buffer is closely tied to a AVFrame
+     * and FFmpeg handle all frame reference tracking for us.
+     */
     buf->buffer.timestamp.tv_usec = buf->index + 1;
 
+    // Output buffers is mapped and capture buffers is exported
     if (V4L2_TYPE_IS_OUTPUT(type)) {
         off_t offset = V4L2_TYPE_IS_MULTIPLANAR(type) ?
                        buf->buffer.m.planes[0].m.mem_offset :
@@ -178,6 +183,7 @@ static int v4l2_request_buffer_alloc(V4L2RequestContext *ctx,
             return AVERROR(errno);
         }
 
+        // Raw bitstream data is appended to output buffers
         buf->addr = (uint8_t *)addr;
     } else {
         struct v4l2_exportbuffer exportbuffer = {
@@ -192,6 +198,7 @@ static int v4l2_request_buffer_alloc(V4L2RequestContext *ctx,
             return AVERROR(errno);
         }
 
+        // Used in the AVDRMFrameDescriptor for decoded frames
         buf->fd = exportbuffer.fd;
     }
 
@@ -205,11 +212,13 @@ static void v4l2_request_buffer_free(V4L2RequestBuffer *buf)
     av_log(NULL, AV_LOG_DEBUG, "%s: buf=%p index=%d fd=%d addr=%p width=%u height=%u size=%u\n", __func__,
            buf, buf->index, buf->fd, buf->addr, buf->width, buf->height, buf->size);
 
+    // Unmap output buffers
     if (buf->addr) {
         munmap(buf->addr, buf->size);
         buf->addr = NULL;
     }
 
+    // Close exported capture buffers or requests for output buffers
     if (buf->fd >= 0) {
         close(buf->fd);
         buf->fd = -1;
@@ -262,11 +271,13 @@ static AVBufferRef *v4l2_request_frame_alloc(void *opaque, size_t size)
         return NULL;
     }
 
+    // Create a V4L2 capture buffer for this AVFrame
     if (v4l2_request_buffer_alloc(ctx, &desc->capture, ctx->format.type) < 0) {
         av_buffer_unref(&ref);
         return NULL;
     }
 
+    // Set AVDRMFrameDescriptor of this AVFrame
     if (ff_v4l2_request_set_drm_descriptor(desc, &ctx->format) < 0) {
         av_buffer_unref(&ref);
         return NULL;
@@ -343,11 +354,13 @@ int ff_v4l2_request_uninit(AVCodecContext *avctx)
     av_log(ctx, AV_LOG_DEBUG, "%s: avctx=%p\n", __func__, avctx);
 
     if (ctx->video_fd >= 0) {
+        // Stop output queue
         if (ioctl(ctx->video_fd, VIDIOC_STREAMOFF, &ctx->output_type) < 0) {
             av_log(ctx, AV_LOG_WARNING, "Failed to stop output streaming: %s (%d)\n",
                    strerror(errno), errno);
         }
 
+        // Stop capture queue
         if (ioctl(ctx->video_fd, VIDIOC_STREAMOFF, &ctx->format.type) < 0) {
             av_log(ctx, AV_LOG_WARNING, "Failed to stop capture streaming: %s (%d)\n",
                    strerror(errno), errno);
@@ -359,12 +372,17 @@ int ff_v4l2_request_uninit(AVCodecContext *avctx)
         av_buffer_pool_flush(hwfc->pool);
     }
 
+    // Close video device file descriptor
     if (ctx->video_fd >= 0) {
         close(ctx->video_fd);
         ctx->video_fd = -1;
     }
 
-    if (ctx->media_fd >= 0) {
+    // Ownership of media device file descriptor may belong to hwdevice
+    if (ctx->device_ref) {
+        av_buffer_unref(&ctx->device_ref);
+        ctx->media_fd = -1;
+    } else if (ctx->media_fd >= 0) {
         close(ctx->media_fd);
         ctx->media_fd = -1;
     }
@@ -398,6 +416,7 @@ static int v4l2_request_init_context(AVCodecContext *avctx)
     if (ret < 0)
         goto fail;
 
+    // Start output queue
     if (ioctl(ctx->video_fd, VIDIOC_STREAMON, &ctx->output_type) < 0) {
         av_log(ctx, AV_LOG_ERROR, "Failed to start output streaming: %s (%d)\n",
                strerror(errno), errno);
@@ -405,6 +424,7 @@ static int v4l2_request_init_context(AVCodecContext *avctx)
         goto fail;
     }
 
+    // Start capture queue
     if (ioctl(ctx->video_fd, VIDIOC_STREAMON, &ctx->format.type) < 0) {
         av_log(ctx, AV_LOG_ERROR, "Failed to start capture streaming: %s (%d)\n",
                strerror(errno), errno);
@@ -424,61 +444,39 @@ int ff_v4l2_request_init(AVCodecContext *avctx,
                          struct v4l2_ext_control *control, int count)
 {
     V4L2RequestContext *ctx = v4l2_request_context(avctx);
-    int ret = AVERROR(EINVAL);
-    struct udev *udev;
-    struct udev_enumerate *enumerate;
-    struct udev_list_entry *devices;
-    struct udev_list_entry *entry;
-    struct udev_device *device;
+    AVV4L2RequestDeviceContext *hwctx = NULL;
+    int ret;
 
     av_log(avctx, AV_LOG_DEBUG, "%s: ctx=%p hw_device_ctx=%p hw_frames_ctx=%p\n", __func__, ctx, avctx->hw_device_ctx, avctx->hw_frames_ctx);
 
+    // Set initial default values
     ctx->av_class = &v4l2_request_context_class;
     ctx->media_fd = -1;
     ctx->video_fd = -1;
 
-    udev = udev_new();
-    if (!udev) {
-        av_log(avctx, AV_LOG_ERROR, "%s: allocating udev context failed\n", __func__);
-        ret = AVERROR(ENOMEM);
-        goto fail;
+    // Try to use media device file descriptor opened and owned by hwdevice
+    if (avctx->hw_device_ctx) {
+        AVHWDeviceContext *device_ctx = (AVHWDeviceContext *)avctx->hw_device_ctx->data;
+        if (device_ctx->type == AV_HWDEVICE_TYPE_V4L2REQUEST && device_ctx->hwctx) {
+            hwctx = device_ctx->hwctx;
+            ctx->media_fd = hwctx->media_fd;
+        }
     }
 
-    enumerate = udev_enumerate_new(udev);
-    if (!enumerate) {
-        av_log(avctx, AV_LOG_ERROR, "%s: allocating udev enumerator failed\n", __func__);
-        ret = AVERROR(ENOMEM);
-        goto fail;
+    // Probe for a capable media and video device for the V4L2 codec pixelformat
+    ret = ff_v4l2_request_probe(avctx, pixelformat, buffersize, control, count);
+    if (ret < 0) {
+        av_log(avctx, AV_LOG_INFO, "No V4L2 video device found for %s\n",
+               av_fourcc2str(pixelformat));
+        return ret;
     }
 
-    udev_enumerate_add_match_subsystem(enumerate, "media");
-    udev_enumerate_scan_devices(enumerate);
-
-    devices = udev_enumerate_get_list_entry(enumerate);
-    udev_list_entry_foreach(entry, devices) {
-        const char *path = udev_list_entry_get_name(entry);
-        if (!path)
-            continue;
-
-        device = udev_device_new_from_syspath(udev, path);
-        if (!device)
-            continue;
-
-        ret = ff_v4l2_request_probe_media_device(device, avctx, pixelformat, buffersize, control, count);
-        udev_device_unref(device);
-
-        if (!ret)
-            break;
+    // Transfer (or return) ownership of media device file descriptor to hwdevice
+    if (hwctx) {
+        hwctx->media_fd = ctx->media_fd;
+        ctx->device_ref = av_buffer_ref(avctx->hw_device_ctx);
     }
 
-    udev_enumerate_unref(enumerate);
-
-    if (!ret)
-        ret = v4l2_request_init_context(avctx);
-    else
-        av_log(avctx, AV_LOG_INFO, "No V4L2 media device found for %s\n", av_fourcc2str(pixelformat));
-
-fail:
-    udev_unref(udev);
-    return ret;
+    // Create buffers and finalize init
+    return v4l2_request_init_context(avctx);
 }
