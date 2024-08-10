@@ -58,6 +58,9 @@ int ff_v4l2_request_query_control(AVCodecContext *avctx,
 int ff_v4l2_request_query_control_default_value(AVCodecContext *avctx,
                                                 uint32_t id);
 
+int ff_v4l2_request_set_request_controls(V4L2RequestContext *ctx, int request_fd,
+                                         struct v4l2_ext_control *control, int count);
+
 int ff_v4l2_request_set_controls(AVCodecContext *avctx,
                                  struct v4l2_ext_control *control, int count);
 
