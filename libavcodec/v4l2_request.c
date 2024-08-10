@@ -40,13 +40,15 @@ static const AVClass v4l2_request_context_class = {
 int ff_v4l2_request_query_control(AVCodecContext *avctx,
                                   struct v4l2_query_ext_ctrl *control)
 {
-    int ret;
-    V4L2RequestContext *ctx = avctx->internal->hwaccel_priv_data;
+    V4L2RequestContext *ctx = v4l2_request_context(avctx);
 
-    ret = ioctl(ctx->video_fd, VIDIOC_QUERY_EXT_CTRL, control);
-    if (ret < 0) {
-        av_log(avctx, AV_LOG_ERROR, "%s: query control failed, %s (%d)\n", __func__, strerror(errno), errno);
-        return AVERROR(EINVAL);
+    if (ioctl(ctx->video_fd, VIDIOC_QUERY_EXT_CTRL, control) < 0) {
+        // Skip error logging when driver does not support control id (EINVAL)
+        if (errno != EINVAL) {
+            av_log(ctx, AV_LOG_ERROR, "Failed to query control %u: %s (%d)\n",
+                   control->id, strerror(errno), errno);
+        }
+        return AVERROR(errno);
     }
 
     return 0;
@@ -55,24 +57,20 @@ int ff_v4l2_request_query_control(AVCodecContext *avctx,
 int ff_v4l2_request_query_control_default_value(AVCodecContext *avctx,
                                                 uint32_t id)
 {
-    int ret;
-    V4L2RequestContext *ctx = avctx->internal->hwaccel_priv_data;
-    struct v4l2_queryctrl control = {
+    struct v4l2_query_ext_ctrl control = {
         .id = id,
     };
+    int ret;
 
-    ret = ioctl(ctx->video_fd, VIDIOC_QUERYCTRL, &control);
-    if (ret < 0) {
-        av_log(avctx, AV_LOG_ERROR, "%s: query control failed, %s (%d)\n", __func__, strerror(errno), errno);
-        return AVERROR(EINVAL);
-    }
+    ret = ff_v4l2_request_query_control(avctx, &control);
+    if (ret < 0)
+        return ret;
 
     return control.default_value;
 }
 
-static int v4l2_request_controls(V4L2RequestContext *ctx, int request_fd,
-                                 unsigned long type,
-                                 struct v4l2_ext_control *control, int count)
+int ff_v4l2_request_set_request_controls(V4L2RequestContext *ctx, int request_fd,
+                                         struct v4l2_ext_control *control, int count)
 {
     struct v4l2_ext_controls controls = {
         .controls = control,
@@ -84,25 +82,22 @@ static int v4l2_request_controls(V4L2RequestContext *ctx, int request_fd,
     if (!control || !count)
         return 0;
 
-    return ioctl(ctx->video_fd, type, &controls);
-}
+    if (ioctl(ctx->video_fd, VIDIOC_S_EXT_CTRLS, &controls) < 0)
+        return AVERROR(errno);
 
-int ff_v4l2_request_set_request_controls(V4L2RequestContext *ctx, int request_fd,
-                                         struct v4l2_ext_control *control, int count)
-{
-    return v4l2_request_controls(ctx, request_fd, VIDIOC_S_EXT_CTRLS, control, count);
+    return 0;
 }
 
 int ff_v4l2_request_set_controls(AVCodecContext *avctx,
                                  struct v4l2_ext_control *control, int count)
 {
-    V4L2RequestContext *ctx = avctx->internal->hwaccel_priv_data;
+    V4L2RequestContext *ctx = v4l2_request_context(avctx);
     int ret;
 
-    ret = v4l2_request_controls(ctx, -1, VIDIOC_S_EXT_CTRLS, control, count);
+    ret = ff_v4l2_request_set_request_controls(ctx, -1, control, count);
     if (ret < 0) {
-        av_log(avctx, AV_LOG_ERROR, "%s: set controls failed, %s (%d)\n", __func__, strerror(errno), errno);
-        return AVERROR(EINVAL);
+        av_log(ctx, AV_LOG_ERROR, "Failed to set %d control(s): %s (%d)\n",
+               count, strerror(errno), errno);
     }
 
     return ret;
@@ -112,7 +107,6 @@ static int v4l2_request_buffer_alloc(V4L2RequestContext *ctx,
                                      V4L2RequestBuffer *buf,
                                      enum v4l2_buf_type type)
 {
-    int ret;
     struct v4l2_plane planes[1] = {};
     struct v4l2_create_buffers buffers = {
         .count = 1,
@@ -122,10 +116,10 @@ static int v4l2_request_buffer_alloc(V4L2RequestContext *ctx,
 
     av_log(ctx, AV_LOG_DEBUG, "%s: buf=%p type=%u\n", __func__, buf, type);
 
-    ret = ioctl(ctx->video_fd, VIDIOC_G_FMT, &buffers.format);
-    if (ret < 0) {
-        av_log(ctx, AV_LOG_ERROR, "%s: get format failed for type %u, %s (%d)\n", __func__, type, strerror(errno), errno);
-        return ret;
+    if (ioctl(ctx->video_fd, VIDIOC_G_FMT, &buffers.format) < 0) {
+        av_log(ctx, AV_LOG_ERROR, "Failed to get format of type %d: %s (%d)\n",
+               type, strerror(errno), errno);
+        return AVERROR(errno);
     }
 
     if (V4L2_TYPE_IS_MULTIPLANAR(buffers.format.type)) {
@@ -138,10 +132,10 @@ static int v4l2_request_buffer_alloc(V4L2RequestContext *ctx,
                av_fourcc2str(fmt->pixelformat), fmt->width, fmt->height, fmt->bytesperline, fmt->sizeimage);
     }
 
-    ret = ioctl(ctx->video_fd, VIDIOC_CREATE_BUFS, &buffers);
-    if (ret < 0) {
-        av_log(ctx, AV_LOG_ERROR, "%s: create buffers failed for type %u, %s (%d)\n", __func__, type, strerror(errno), errno);
-        return ret;
+    if (ioctl(ctx->video_fd, VIDIOC_CREATE_BUFS, &buffers) < 0) {
+        av_log(ctx, AV_LOG_ERROR, "Failed to create buffer of type %d: %s (%d)\n",
+               type, strerror(errno), errno);
+        return AVERROR(errno);
     }
 
     if (V4L2_TYPE_IS_MULTIPLANAR(type)) {
@@ -164,23 +158,24 @@ static int v4l2_request_buffer_alloc(V4L2RequestContext *ctx,
     buf->buffer.memory = V4L2_MEMORY_MMAP;
     buf->buffer.index = buf->index;
 
-    ret = ioctl(ctx->video_fd, VIDIOC_QUERYBUF, &buf->buffer);
-    if (ret < 0) {
-        av_log(ctx, AV_LOG_ERROR, "%s: query buffer %d failed, %s (%d)\n", __func__, buf->index, strerror(errno), errno);
-        return ret;
+    if (ioctl(ctx->video_fd, VIDIOC_QUERYBUF, &buf->buffer) < 0) {
+        av_log(ctx, AV_LOG_ERROR, "Failed to query buffer %d of type %d: %s (%d)\n",
+               buf->index, type, strerror(errno), errno);
+        return AVERROR(errno);
     }
 
     buf->buffer.timestamp.tv_usec = buf->index + 1;
 
     if (V4L2_TYPE_IS_OUTPUT(type)) {
-        uint32_t offset = V4L2_TYPE_IS_MULTIPLANAR(type) ?
+        off_t offset = V4L2_TYPE_IS_MULTIPLANAR(type) ?
                        buf->buffer.m.planes[0].m.mem_offset :
                        buf->buffer.m.offset;
         void *addr = mmap(NULL, buf->size, PROT_READ | PROT_WRITE, MAP_SHARED,
                           ctx->video_fd, offset);
         if (addr == MAP_FAILED) {
-            av_log(ctx, AV_LOG_ERROR, "%s: mmap failed, %s (%d)\n", __func__, strerror(errno), errno);
-            return -1;
+            av_log(ctx, AV_LOG_ERROR, "Failed to map output buffer %d: %s (%d)\n",
+                   buf->index, strerror(errno), errno);
+            return AVERROR(errno);
         }
 
         buf->addr = (uint8_t *)addr;
@@ -191,10 +186,10 @@ static int v4l2_request_buffer_alloc(V4L2RequestContext *ctx,
             .flags = O_RDONLY,
         };
 
-        ret = ioctl(ctx->video_fd, VIDIOC_EXPBUF, &exportbuffer);
-        if (ret < 0) {
-            av_log(ctx, AV_LOG_ERROR, "%s: export buffer %d failed, %s (%d)\n", __func__, buf->index, strerror(errno), errno);
-            return ret;
+        if (ioctl(ctx->video_fd, VIDIOC_EXPBUF, &exportbuffer) < 0) {
+            av_log(ctx, AV_LOG_ERROR, "Failed to export capture buffer %d: %s (%d)\n",
+                   buf->index, strerror(errno), errno);
+            return AVERROR(errno);
         }
 
         buf->fd = exportbuffer.fd;
@@ -210,24 +205,30 @@ static void v4l2_request_buffer_free(V4L2RequestBuffer *buf)
     av_log(NULL, AV_LOG_DEBUG, "%s: buf=%p index=%d fd=%d addr=%p width=%u height=%u size=%u\n", __func__,
            buf, buf->index, buf->fd, buf->addr, buf->width, buf->height, buf->size);
 
-    if (buf->addr)
+    if (buf->addr) {
         munmap(buf->addr, buf->size);
+        buf->addr = NULL;
+    }
 
-    if (buf->fd >= 0)
+    if (buf->fd >= 0) {
         close(buf->fd);
+        buf->fd = -1;
+    }
 }
 
 static void v4l2_request_frame_free(void *opaque, uint8_t *data)
 {
-    V4L2RequestDescriptor *req = (V4L2RequestDescriptor*)data;
+    V4L2RequestFrameDescriptor *desc = (V4L2RequestFrameDescriptor *)data;
 
-    av_log(NULL, AV_LOG_DEBUG, "%s: opaque=%p data=%p request_fd=%d\n", __func__, opaque, data, req->request_fd);
+    av_log(NULL, AV_LOG_DEBUG, "%s: opaque=%p data=%p request_fd=%d\n", __func__, opaque, data, desc->request_fd);
 
-    if (req->request_fd >= 0)
-        close(req->request_fd);
+    if (desc->request_fd >= 0) {
+        close(desc->request_fd);
+	desc->request_fd = -1;
+    }
 
-    v4l2_request_buffer_free(&req->capture);
-    v4l2_request_buffer_free(&req->output);
+    v4l2_request_buffer_free(&desc->capture);
+    v4l2_request_buffer_free(&desc->output);
 
     av_free(data);
 }
@@ -235,10 +236,9 @@ static void v4l2_request_frame_free(void *opaque, uint8_t *data)
 static AVBufferRef *v4l2_request_frame_alloc(void *opaque, size_t size)
 {
     V4L2RequestContext *ctx = opaque;
-    V4L2RequestDescriptor *req;
+    V4L2RequestFrameDescriptor *desc;
     AVBufferRef *ref;
     uint8_t *data;
-    int ret;
 
     data = av_mallocz(size);
     if (!data)
@@ -248,35 +248,37 @@ static AVBufferRef *v4l2_request_frame_alloc(void *opaque, size_t size)
 
     ref = av_buffer_create(data, size, v4l2_request_frame_free, ctx, 0);
     if (!ref) {
-        av_freep(&data);
+        av_free(data);
         return NULL;
     }
 
-    req = (V4L2RequestDescriptor*)data;
-    req->request_fd = -1;
-    req->output.fd = -1;
-    req->capture.fd = -1;
+    desc = (V4L2RequestFrameDescriptor *)data;
+    desc->request_fd = -1;
+    desc->output.fd = -1;
+    desc->capture.fd = -1;
 
-    ret = v4l2_request_buffer_alloc(ctx, &req->output, ctx->output_type);
-    if (ret < 0) {
+    if (v4l2_request_buffer_alloc(ctx, &desc->output, ctx->output_type) < 0) {
         av_buffer_unref(&ref);
         return NULL;
     }
 
-    ret = v4l2_request_buffer_alloc(ctx, &req->capture, ctx->format.type);
-    if (ret < 0) {
+    if (v4l2_request_buffer_alloc(ctx, &desc->capture, ctx->format.type) < 0) {
         av_buffer_unref(&ref);
         return NULL;
     }
 
-    ret = ioctl(ctx->media_fd, MEDIA_IOC_REQUEST_ALLOC, &req->request_fd);
-    if (ret < 0) {
+    if (ff_v4l2_request_set_drm_descriptor(desc, &ctx->format) < 0) {
+        av_buffer_unref(&ref);
+        return NULL;
+    }
+
+    if (ioctl(ctx->media_fd, MEDIA_IOC_REQUEST_ALLOC, &desc->request_fd) < 0) {
         av_log(ctx, AV_LOG_ERROR, "%s: request alloc failed, %s (%d)\n", __func__, strerror(errno), errno);
         av_buffer_unref(&ref);
         return NULL;
     }
 
-    av_log(ctx, AV_LOG_DEBUG, "%s: size=%zu data=%p request_fd=%d\n", __func__, size, data, req->request_fd);
+    av_log(ctx, AV_LOG_DEBUG, "%s: size=%zu data=%p request_fd=%d\n", __func__, size, data, desc->request_fd);
     return ref;
 }
 
@@ -289,15 +291,14 @@ static void v4l2_request_hwframe_ctx_free(AVHWFramesContext *hwfc)
 {
     av_log(NULL, AV_LOG_DEBUG, "%s: hwfc=%p pool=%p\n", __func__, hwfc, hwfc->pool);
 
-    av_buffer_pool_flush(hwfc->pool);
     av_buffer_pool_uninit(&hwfc->pool);
 }
 
-int ff_v4l2_request_frame_params(AVCodecContext *avctx, AVBufferRef *hw_frames_ctx)
+int ff_v4l2_request_frame_params(AVCodecContext *avctx,
+                                 AVBufferRef *hw_frames_ctx)
 {
-    V4L2RequestContext *ctx = avctx->internal->hwaccel_priv_data;
-    AVHWFramesContext *hwfc = (AVHWFramesContext*)hw_frames_ctx->data;
-    uint32_t pixelformat;
+    V4L2RequestContext *ctx = v4l2_request_context(avctx);
+    AVHWFramesContext *hwfc = (AVHWFramesContext *)hw_frames_ctx->data;
 
     hwfc->format = AV_PIX_FMT_DRM_PRIME;
     hwfc->sw_format = ff_v4l2_request_get_sw_format(&ctx->format);
@@ -305,14 +306,12 @@ int ff_v4l2_request_frame_params(AVCodecContext *avctx, AVBufferRef *hw_frames_c
     if (V4L2_TYPE_IS_MULTIPLANAR(ctx->format.type)) {
         hwfc->width = ctx->format.fmt.pix_mp.width;
         hwfc->height = ctx->format.fmt.pix_mp.height;
-        pixelformat = ctx->format.fmt.pix_mp.pixelformat;
     } else {
         hwfc->width = ctx->format.fmt.pix.width;
         hwfc->height = ctx->format.fmt.pix.height;
-        pixelformat = ctx->format.fmt.pix.pixelformat;
     }
 
-    hwfc->pool = av_buffer_pool_init2(sizeof(V4L2RequestDescriptor), ctx,
+    hwfc->pool = av_buffer_pool_init2(sizeof(V4L2RequestFrameDescriptor), ctx,
                                       v4l2_request_frame_alloc, v4l2_request_pool_free);
     if (!hwfc->pool)
         return AVERROR(ENOMEM);
@@ -339,19 +338,20 @@ int ff_v4l2_request_frame_params(AVCodecContext *avctx, AVBufferRef *hw_frames_c
 
 int ff_v4l2_request_uninit(AVCodecContext *avctx)
 {
-    V4L2RequestContext *ctx = avctx->internal->hwaccel_priv_data;
-    int ret;
+    V4L2RequestContext *ctx = v4l2_request_context(avctx);
 
     av_log(ctx, AV_LOG_DEBUG, "%s: avctx=%p\n", __func__, avctx);
 
     if (ctx->video_fd >= 0) {
-        ret = ioctl(ctx->video_fd, VIDIOC_STREAMOFF, &ctx->output_type);
-        if (ret < 0)
-            av_log(avctx, AV_LOG_ERROR, "%s: output stream off failed, %s (%d)\n", __func__, strerror(errno), errno);
+        if (ioctl(ctx->video_fd, VIDIOC_STREAMOFF, &ctx->output_type) < 0) {
+            av_log(ctx, AV_LOG_WARNING, "Failed to stop output streaming: %s (%d)\n",
+                   strerror(errno), errno);
+        }
 
-        ret = ioctl(ctx->video_fd, VIDIOC_STREAMOFF, &ctx->format.type);
-        if (ret < 0)
-            av_log(avctx, AV_LOG_ERROR, "%s: capture stream off failed, %s (%d)\n", __func__, strerror(errno), errno);
+        if (ioctl(ctx->video_fd, VIDIOC_STREAMOFF, &ctx->format.type) < 0) {
+            av_log(ctx, AV_LOG_WARNING, "Failed to stop capture streaming: %s (%d)\n",
+                   strerror(errno), errno);
+        }
     }
 
     if (avctx->hw_frames_ctx) {
@@ -359,24 +359,28 @@ int ff_v4l2_request_uninit(AVCodecContext *avctx)
         av_buffer_pool_flush(hwfc->pool);
     }
 
-    if (ctx->video_fd >= 0)
+    if (ctx->video_fd >= 0) {
         close(ctx->video_fd);
+        ctx->video_fd = -1;
+    }
 
-    if (ctx->media_fd >= 0)
+    if (ctx->media_fd >= 0) {
         close(ctx->media_fd);
+        ctx->media_fd = -1;
+    }
 
     return 0;
 }
 
 static int v4l2_request_init_context(AVCodecContext *avctx)
 {
-    V4L2RequestContext *ctx = avctx->internal->hwaccel_priv_data;
+    V4L2RequestContext *ctx = v4l2_request_context(avctx);
     int ret;
 
-    ret = ioctl(ctx->video_fd, VIDIOC_G_FMT, &ctx->format);
-    if (ret < 0) {
-        av_log(avctx, AV_LOG_ERROR, "%s: get capture format failed, %s (%d)\n", __func__, strerror(errno), errno);
-        ret = AVERROR(EINVAL);
+    if (ioctl(ctx->video_fd, VIDIOC_G_FMT, &ctx->format) < 0) {
+        av_log(ctx, AV_LOG_ERROR, "Failed to get capture format: %s (%d)\n",
+               strerror(errno), errno);
+        ret = AVERROR(errno);
         goto fail;
     }
 
@@ -394,17 +398,17 @@ static int v4l2_request_init_context(AVCodecContext *avctx)
     if (ret < 0)
         goto fail;
 
-    ret = ioctl(ctx->video_fd, VIDIOC_STREAMON, &ctx->output_type);
-    if (ret < 0) {
-        av_log(avctx, AV_LOG_ERROR, "%s: output stream on failed, %s (%d)\n", __func__, strerror(errno), errno);
-        ret = AVERROR(EINVAL);
+    if (ioctl(ctx->video_fd, VIDIOC_STREAMON, &ctx->output_type) < 0) {
+        av_log(ctx, AV_LOG_ERROR, "Failed to start output streaming: %s (%d)\n",
+               strerror(errno), errno);
+        ret = AVERROR(errno);
         goto fail;
     }
 
-    ret = ioctl(ctx->video_fd, VIDIOC_STREAMON, &ctx->format.type);
-    if (ret < 0) {
-        av_log(avctx, AV_LOG_ERROR, "%s: capture stream on failed, %s (%d)\n", __func__, strerror(errno), errno);
-        ret = AVERROR(EINVAL);
+    if (ioctl(ctx->video_fd, VIDIOC_STREAMON, &ctx->format.type) < 0) {
+        av_log(ctx, AV_LOG_ERROR, "Failed to start capture streaming: %s (%d)\n",
+               strerror(errno), errno);
+        ret = AVERROR(errno);
         goto fail;
     }
 
@@ -419,7 +423,7 @@ int ff_v4l2_request_init(AVCodecContext *avctx,
                          uint32_t pixelformat, uint32_t buffersize,
                          struct v4l2_ext_control *control, int count)
 {
-    V4L2RequestContext *ctx = avctx->internal->hwaccel_priv_data;
+    V4L2RequestContext *ctx = v4l2_request_context(avctx);
     int ret = AVERROR(EINVAL);
     struct udev *udev;
     struct udev_enumerate *enumerate;

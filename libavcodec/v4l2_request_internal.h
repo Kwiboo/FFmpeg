@@ -24,26 +24,26 @@
 #include "internal.h"
 #include "v4l2_request.h"
 
-typedef struct V4L2RequestDescriptor {
-    AVDRMFrameDescriptor drm;
+typedef struct V4L2RequestFrameDescriptor {
+    AVDRMFrameDescriptor base;
     int request_fd;
     V4L2RequestBuffer output;
     V4L2RequestBuffer capture;
-} V4L2RequestDescriptor;
+} V4L2RequestFrameDescriptor;
 
 static inline V4L2RequestContext *v4l2_request_context(AVCodecContext *avctx)
 {
     return (V4L2RequestContext *)avctx->internal->hwaccel_priv_data;
 }
 
-static inline V4L2RequestDescriptor *v4l2_request_framedesc(AVFrame *frame)
+static inline V4L2RequestFrameDescriptor *v4l2_request_framedesc(AVFrame *frame)
 {
-    return (V4L2RequestDescriptor *)frame->data[0];
+    return (V4L2RequestFrameDescriptor *)frame->data[0];
 }
 
 enum AVPixelFormat ff_v4l2_request_get_sw_format(struct v4l2_format *format);
 
-int ff_v4l2_request_set_drm_descriptor(V4L2RequestDescriptor *framedesc,
+int ff_v4l2_request_set_drm_descriptor(V4L2RequestFrameDescriptor *framedesc,
                                        struct v4l2_format *format);
 
 int ff_v4l2_request_probe(AVCodecContext *avctx, uint32_t pixelformat,

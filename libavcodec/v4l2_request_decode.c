@@ -26,15 +26,14 @@
 
 uint64_t ff_v4l2_request_get_capture_timestamp(AVFrame *frame)
 {
-    V4L2RequestDescriptor *req = (V4L2RequestDescriptor*)frame->data[0];
-    return req ? v4l2_timeval_to_ns(&req->capture.buffer.timestamp) : 0;
+    V4L2RequestFrameDescriptor *desc = v4l2_request_framedesc(frame);
+    return desc ? v4l2_timeval_to_ns(&desc->capture.buffer.timestamp) : 0;
 }
 
 int ff_v4l2_request_reset_frame(AVCodecContext *avctx, AVFrame *frame)
 {
-    V4L2RequestDescriptor *req = (V4L2RequestDescriptor*)frame->data[0];
-    memset(&req->drm, 0, sizeof(AVDRMFrameDescriptor));
-    req->output.used = 0;
+    V4L2RequestFrameDescriptor *desc = v4l2_request_framedesc(frame);
+    desc->output.used = 0;
     return 0;
 }
 
@@ -42,22 +41,22 @@ int ff_v4l2_request_start_frame(AVCodecContext *avctx,
                                 V4L2RequestPictureContext *pic,
                                 AVFrame *frame)
 {
-    V4L2RequestDescriptor *req = (V4L2RequestDescriptor*)frame->data[0];
+    V4L2RequestFrameDescriptor *desc = v4l2_request_framedesc(frame);
 
-    pic->output = &req->output;
-    pic->capture = &req->capture;
+    pic->output = &desc->output;
+    pic->capture = &desc->capture;
 
     return ff_v4l2_request_reset_frame(avctx, frame);
 }
 
 int ff_v4l2_request_append_output(AVCodecContext *avctx, AVFrame *frame, const uint8_t *data, uint32_t size)
 {
-    V4L2RequestDescriptor *req = (V4L2RequestDescriptor*)frame->data[0];
-    if (req->output.used + size + (AV_INPUT_BUFFER_PADDING_SIZE * 4) <= req->output.size) {
-        memcpy(req->output.addr + req->output.used, data, size);
-        req->output.used += size;
+    V4L2RequestFrameDescriptor *desc = v4l2_request_framedesc(frame);
+    if (desc->output.used + size + (AV_INPUT_BUFFER_PADDING_SIZE * 4) <= desc->output.size) {
+        memcpy(desc->output.addr + desc->output.used, data, size);
+        desc->output.used += size;
     } else {
-        av_log(avctx, AV_LOG_ERROR, "%s: output.used=%u output.size=%u size=%u\n", __func__, req->output.used, req->output.size, size);
+        av_log(avctx, AV_LOG_ERROR, "%s: output.used=%u output.size=%u size=%u\n", __func__, desc->output.used, desc->output.size, size);
     }
     return 0;
 }
@@ -110,8 +109,8 @@ static int v4l2_request_dequeue_buffer(V4L2RequestContext *ctx, V4L2RequestBuffe
 
 static int v4l2_request_queue_decode(AVCodecContext *avctx, AVFrame *frame, struct v4l2_ext_control *control, int count, bool first_slice, bool last_slice)
 {
-    V4L2RequestContext *ctx = avctx->internal->hwaccel_priv_data;
-    V4L2RequestDescriptor *req = (V4L2RequestDescriptor*)frame->data[0];
+    V4L2RequestContext *ctx = v4l2_request_context(avctx);
+    V4L2RequestFrameDescriptor *req = v4l2_request_framedesc(frame);
     struct timeval tv = { 2, 0 };
     fd_set except_fds;
     int ret;
@@ -185,9 +184,6 @@ static int v4l2_request_queue_decode(AVCodecContext *avctx, AVFrame *frame, stru
         return -1;
     }
 
-    if (last_slice)
-        return ff_v4l2_request_set_drm_descriptor(req, &ctx->format);
-
     return 0;
 
 fail:
@@ -208,10 +204,10 @@ fail:
 
 int ff_v4l2_request_decode_slice(AVCodecContext *avctx, AVFrame *frame, struct v4l2_ext_control *control, int count, bool first_slice, bool last_slice)
 {
-    V4L2RequestDescriptor *req = (V4L2RequestDescriptor*)frame->data[0];
+    V4L2RequestFrameDescriptor *desc = v4l2_request_framedesc(frame);
 
     // fall back to queue each slice as a full frame
-    if ((req->output.capabilities & V4L2_BUF_CAP_SUPPORTS_M2M_HOLD_CAPTURE_BUF) != V4L2_BUF_CAP_SUPPORTS_M2M_HOLD_CAPTURE_BUF)
+    if ((desc->output.capabilities & V4L2_BUF_CAP_SUPPORTS_M2M_HOLD_CAPTURE_BUF) != V4L2_BUF_CAP_SUPPORTS_M2M_HOLD_CAPTURE_BUF)
         return v4l2_request_queue_decode(avctx, frame, control, count, true, true);
 
     return v4l2_request_queue_decode(avctx, frame, control, count, first_slice, last_slice);

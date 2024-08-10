@@ -81,10 +81,10 @@ enum AVPixelFormat ff_v4l2_request_get_sw_format(struct v4l2_format *format)
     return AV_PIX_FMT_NONE;
 }
 
-int ff_v4l2_request_set_drm_descriptor(V4L2RequestDescriptor *req,
+int ff_v4l2_request_set_drm_descriptor(V4L2RequestFrameDescriptor *framedesc,
                                        struct v4l2_format *format)
 {
-    AVDRMFrameDescriptor *desc = &req->drm;
+    AVDRMFrameDescriptor *desc = &framedesc->base;
     AVDRMLayerDescriptor *layer = &desc->layers[0];
     uint32_t pixelformat = V4L2_TYPE_IS_MULTIPLANAR(format->type) ?
                            format->fmt.pix_mp.pixelformat :
@@ -104,8 +104,8 @@ int ff_v4l2_request_set_drm_descriptor(V4L2RequestDescriptor *req,
         return -1;
 
     desc->nb_objects = 1;
-    desc->objects[0].fd = req->capture.fd;
-    desc->objects[0].size = req->capture.size;
+    desc->objects[0].fd = framedesc->capture.fd;
+    desc->objects[0].size = framedesc->capture.size;
 
     desc->nb_layers = 1;
     layer->nb_planes = 1;
@@ -134,7 +134,7 @@ static int v4l2_request_set_format(AVCodecContext *avctx,
                                    uint32_t pixelformat,
                                    uint32_t buffersize)
 {
-    V4L2RequestContext *ctx = avctx->internal->hwaccel_priv_data;
+    V4L2RequestContext *ctx = v4l2_request_context(avctx);
     struct v4l2_format format = {
         .type = type,
     };
@@ -157,7 +157,7 @@ static int v4l2_request_set_format(AVCodecContext *avctx,
 
 static int v4l2_request_select_capture_format(AVCodecContext *avctx)
 {
-    V4L2RequestContext *ctx = avctx->internal->hwaccel_priv_data;
+    V4L2RequestContext *ctx = v4l2_request_context(avctx);
     enum v4l2_buf_type type = ctx->format.type;
 
 #if 1
@@ -206,7 +206,7 @@ static int v4l2_request_select_capture_format(AVCodecContext *avctx)
 static int v4l2_request_try_framesize(AVCodecContext *avctx,
                                       uint32_t pixelformat)
 {
-    V4L2RequestContext *ctx = avctx->internal->hwaccel_priv_data;
+    V4L2RequestContext *ctx = v4l2_request_context(avctx);
     struct v4l2_frmsizeenum frmsize = {
         .index = 0,
         .pixel_format = pixelformat,
@@ -240,7 +240,7 @@ static int v4l2_request_try_format(AVCodecContext *avctx,
                                    enum v4l2_buf_type type,
                                    uint32_t pixelformat)
 {
-    V4L2RequestContext *ctx = avctx->internal->hwaccel_priv_data;
+    V4L2RequestContext *ctx = v4l2_request_context(avctx);
     struct v4l2_fmtdesc fmtdesc = {
         .index = 0,
         .type = type,
@@ -282,7 +282,7 @@ static int v4l2_request_probe_video_device(struct udev_device *device,
                                            struct v4l2_ext_control *control,
                                            int count)
 {
-    V4L2RequestContext *ctx = avctx->internal->hwaccel_priv_data;
+    V4L2RequestContext *ctx = v4l2_request_context(avctx);
     int ret = AVERROR(EINVAL);
     struct v4l2_capability capability = {0};
     unsigned int capabilities = 0;
@@ -386,7 +386,7 @@ fail:
 
 int ff_v4l2_request_probe_media_device(struct udev_device *device, AVCodecContext *avctx, uint32_t pixelformat, uint32_t buffersize, struct v4l2_ext_control *control, int count)
 {
-    V4L2RequestContext *ctx = avctx->internal->hwaccel_priv_data;
+    V4L2RequestContext *ctx = v4l2_request_context(avctx);
     int ret;
     struct media_device_info device_info = {0};
     struct media_v2_topology topology = {0};
