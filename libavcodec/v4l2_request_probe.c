@@ -250,7 +250,6 @@ static int v4l2_request_try_format(AVCodecContext *avctx,
         fmtdesc.index++;
     }
 
-    av_log(avctx, AV_LOG_DEBUG, "%s: pixelformat %s not supported for type %u\n", __func__, av_fourcc2str(pixelformat), type);
     return AVERROR(errno);
 }
 
@@ -294,8 +293,6 @@ static int v4l2_request_probe_video_device(const char *path,
         capabilities = capability.device_caps;
     else
         capabilities = capability.capabilities;
-
-    av_log(avctx, AV_LOG_DEBUG, "%s: ctx=%p path=%s capabilities=%u\n", __func__, ctx, path, capabilities);
 
     // Ensure streaming is supported on the video device
     if ((capabilities & V4L2_CAP_STREAMING) != V4L2_CAP_STREAMING) {
