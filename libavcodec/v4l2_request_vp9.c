@@ -214,7 +214,7 @@ static int v4l2_request_vp9_decode_slice(AVCodecContext *avctx, const uint8_t *b
     const VP9Context *s = avctx->priv_data;
     const VP9Frame *f = &s->s.frames[CUR_FRAME];
 
-    return ff_v4l2_request_append_output_buffer(avctx, f->tf.f, buffer, size);
+    return ff_v4l2_request_append_output(avctx, f->tf.f, buffer, size);
 }
 
 static int v4l2_request_vp9_end_frame(AVCodecContext *avctx)

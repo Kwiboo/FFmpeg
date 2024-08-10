@@ -19,18 +19,11 @@
 #ifndef AVCODEC_V4L2_REQUEST_H
 #define AVCODEC_V4L2_REQUEST_H
 
+#include <stdbool.h>
+
 #include <linux/videodev2.h>
 
 #include "libavutil/hwcontext_drm.h"
-
-typedef struct V4L2RequestContext {
-    const AVClass *av_class;
-    int video_fd;
-    int media_fd;
-    enum v4l2_buf_type output_type;
-    struct v4l2_format format;
-    int timestamp;
-} V4L2RequestContext;
 
 typedef struct V4L2RequestBuffer {
     int index;
@@ -44,6 +37,19 @@ typedef struct V4L2RequestBuffer {
     struct v4l2_buffer buffer;
 } V4L2RequestBuffer;
 
+typedef struct V4L2RequestContext {
+    const AVClass *av_class;
+    int media_fd;
+    int video_fd;
+    struct v4l2_format format;
+    enum v4l2_buf_type output_type;
+} V4L2RequestContext;
+
+typedef struct V4L2RequestPictureContext {
+    V4L2RequestBuffer *output;
+    V4L2RequestBuffer *capture;
+} V4L2RequestPictureContext;
+
 typedef struct V4L2RequestDescriptor {
     AVDRMFrameDescriptor drm;
     int request_fd;
@@ -51,28 +57,46 @@ typedef struct V4L2RequestDescriptor {
     V4L2RequestBuffer capture;
 } V4L2RequestDescriptor;
 
-uint64_t ff_v4l2_request_get_capture_timestamp(AVFrame *frame);
+int ff_v4l2_request_query_control(AVCodecContext *avctx,
+                                  struct v4l2_query_ext_ctrl *control);
 
-int ff_v4l2_request_reset_frame(AVCodecContext *avctx, AVFrame *frame);
-
-int ff_v4l2_request_append_output_buffer(AVCodecContext *avctx, AVFrame *frame, const uint8_t *data, uint32_t size);
-
-int ff_v4l2_request_set_controls(AVCodecContext *avctx, struct v4l2_ext_control *control, int count);
+int ff_v4l2_request_query_control_default_value(AVCodecContext *avctx,
+                                                uint32_t id);
 
 int ff_v4l2_request_get_controls(AVCodecContext *avctx, struct v4l2_ext_control *control, int count);
 
-int ff_v4l2_request_query_control(AVCodecContext *avctx, struct v4l2_query_ext_ctrl *control);
+int ff_v4l2_request_set_controls(AVCodecContext *avctx,
+                                 struct v4l2_ext_control *control, int count);
 
-int ff_v4l2_request_query_control_default_value(AVCodecContext *avctx, uint32_t id);
-
-int ff_v4l2_request_decode_slice(AVCodecContext *avctx, AVFrame *frame, struct v4l2_ext_control *control, int count, int first_slice, int last_slice);
-
-int ff_v4l2_request_decode_frame(AVCodecContext *avctx, AVFrame *frame, struct v4l2_ext_control *control, int count);
-
-int ff_v4l2_request_init(AVCodecContext *avctx, uint32_t pixelformat, uint32_t buffersize, struct v4l2_ext_control *control, int count);
+int ff_v4l2_request_frame_params(AVCodecContext *avctx,
+                                 AVBufferRef *hw_frames_ctx);
 
 int ff_v4l2_request_uninit(AVCodecContext *avctx);
 
-int ff_v4l2_request_frame_params(AVCodecContext *avctx, AVBufferRef *hw_frames_ctx);
+int ff_v4l2_request_init(AVCodecContext *avctx,
+                         uint32_t pixelformat, uint32_t buffersize,
+                         struct v4l2_ext_control *control, int count);
+
+uint64_t ff_v4l2_request_get_capture_timestamp(AVFrame *frame);
+
+int ff_v4l2_request_append_output(AVCodecContext *avctx,
+                                  AVFrame *frame,
+                                  const uint8_t *data, uint32_t size);
+
+int ff_v4l2_request_decode_slice(AVCodecContext *avctx,
+                                 AVFrame *frame,
+                                 struct v4l2_ext_control *control, int count,
+                                 bool first_slice, bool last_slice);
+
+int ff_v4l2_request_decode_frame(AVCodecContext *avctx,
+                                 AVFrame *frame,
+                                 struct v4l2_ext_control *control, int count);
+
+int ff_v4l2_request_reset_frame(AVCodecContext *avctx,
+                                AVFrame *frame);
+
+int ff_v4l2_request_start_frame(AVCodecContext *avctx,
+                                V4L2RequestPictureContext *pic, AVFrame *frame);
+
 
 #endif /* AVCODEC_V4L2_REQUEST_H */

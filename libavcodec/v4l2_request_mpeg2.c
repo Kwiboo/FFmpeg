@@ -21,6 +21,7 @@
 #include "v4l2_request.h"
 
 typedef struct V4L2RequestControlsMPEG2 {
+    V4L2RequestPictureContext pic;
     struct v4l2_ctrl_mpeg2_sequence sequence;
     struct v4l2_ctrl_mpeg2_picture picture;
     struct v4l2_ctrl_mpeg2_quantisation quantisation;
@@ -32,13 +33,17 @@ static int v4l2_request_mpeg2_start_frame(AVCodecContext *avctx,
 {
     const MpegEncContext *s = avctx->priv_data;
     V4L2RequestControlsMPEG2 *controls = s->current_picture_ptr->hwaccel_picture_private;
-    V4L2RequestDescriptor *req = (V4L2RequestDescriptor*)s->current_picture_ptr->f->data[0];
+    int ret;
+
+    ret = ff_v4l2_request_start_frame(avctx, &controls->pic, s->current_picture_ptr->f);
+    if (ret)
+        return ret;
 
     controls->sequence = (struct v4l2_ctrl_mpeg2_sequence) {
         /* ISO/IEC 13818-2, ITU-T Rec. H.262: Sequence header */
         .horizontal_size = s->width,
         .vertical_size = s->height,
-        .vbv_buffer_size = req->output.size,
+        .vbv_buffer_size = controls->pic.output->size,
 
         /* ISO/IEC 13818-2, ITU-T Rec. H.262: Sequence extension */
         .profile_and_level_indication = 0,
@@ -87,10 +92,12 @@ static int v4l2_request_mpeg2_start_frame(AVCodecContext *avctx,
 
     switch (s->pict_type) {
     case AV_PICTURE_TYPE_B:
-        controls->picture.backward_ref_ts = ff_v4l2_request_get_capture_timestamp(s->next_picture.f);
+        controls->picture.backward_ref_ts =
+            ff_v4l2_request_get_capture_timestamp(s->next_picture.f);
         // fall-through
     case AV_PICTURE_TYPE_P:
-        controls->picture.forward_ref_ts = ff_v4l2_request_get_capture_timestamp(s->last_picture.f);
+        controls->picture.forward_ref_ts =
+            ff_v4l2_request_get_capture_timestamp(s->last_picture.f);
     }
 
     for (int i = 0; i < 64; i++) {
@@ -101,14 +108,15 @@ static int v4l2_request_mpeg2_start_frame(AVCodecContext *avctx,
         controls->quantisation.chroma_non_intra_quantiser_matrix[i] = s->chroma_inter_matrix[n];
     }
 
-    return ff_v4l2_request_reset_frame(avctx, s->current_picture_ptr->f);
+    return 0;
 }
 
-static int v4l2_request_mpeg2_decode_slice(AVCodecContext *avctx, const uint8_t *buffer, uint32_t size)
+static int v4l2_request_mpeg2_decode_slice(AVCodecContext *avctx,
+                                           const uint8_t *buffer, uint32_t size)
 {
     const MpegEncContext *s = avctx->priv_data;
 
-    return ff_v4l2_request_append_output_buffer(avctx, s->current_picture_ptr->f, buffer, size);
+    return ff_v4l2_request_append_output(avctx, s->current_picture_ptr->f, buffer, size);
 }
 
 static int v4l2_request_mpeg2_end_frame(AVCodecContext *avctx)
@@ -134,12 +142,15 @@ static int v4l2_request_mpeg2_end_frame(AVCodecContext *avctx)
         },
     };
 
-    return ff_v4l2_request_decode_frame(avctx, s->current_picture_ptr->f, control, FF_ARRAY_ELEMS(control));
+    return ff_v4l2_request_decode_frame(avctx, s->current_picture_ptr->f,
+                                        control, FF_ARRAY_ELEMS(control));
 }
 
 static int v4l2_request_mpeg2_init(AVCodecContext *avctx)
 {
-    return ff_v4l2_request_init(avctx, V4L2_PIX_FMT_MPEG2_SLICE, 1024 * 1024, NULL, 0);
+    return ff_v4l2_request_init(avctx, V4L2_PIX_FMT_MPEG2_SLICE,
+                                1024 * 1024,
+                                NULL, 0);
 }
 
 const AVHWAccel ff_mpeg2_v4l2request_hwaccel = {
@@ -155,5 +166,4 @@ const AVHWAccel ff_mpeg2_v4l2request_hwaccel = {
     .uninit         = ff_v4l2_request_uninit,
     .priv_data_size = sizeof(V4L2RequestContext),
     .frame_params   = ff_v4l2_request_frame_params,
-    .caps_internal  = HWACCEL_CAP_ASYNC_SAFE,
 };

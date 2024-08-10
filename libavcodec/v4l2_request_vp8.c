@@ -155,7 +155,7 @@ static int v4l2_request_vp8_decode_slice(AVCodecContext *avctx,
     frame->quant.uv_dc_delta = s->quant.uvdc_delta;
     frame->quant.uv_ac_delta = s->quant.uvac_delta;
 
-    return ff_v4l2_request_append_output_buffer(avctx, s->framep[VP8_FRAME_CURRENT]->tf.f, buffer, size);
+    return ff_v4l2_request_append_output(avctx, s->framep[VP8_FRAME_CURRENT]->tf.f, buffer, size);
 }
 
 static int v4l2_request_vp8_init(AVCodecContext *avctx)

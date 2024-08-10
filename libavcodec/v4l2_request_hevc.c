@@ -530,12 +530,12 @@ static int v4l2_request_hevc_decode_slice(AVCodecContext *avctx, const uint8_t *
         return ret;
 
     if (ctx->start_code == V4L2_STATELESS_HEVC_START_CODE_ANNEX_B) {
-        ret = ff_v4l2_request_append_output_buffer(avctx, h->ref->frame, nalu_slice_start_code, 3);
+        ret = ff_v4l2_request_append_output(avctx, h->ref->frame, nalu_slice_start_code, 3);
         if (ret)
             return ret;
     }
 
-    ret = ff_v4l2_request_append_output_buffer(avctx, h->ref->frame, buffer, size);
+    ret = ff_v4l2_request_append_output(avctx, h->ref->frame, buffer, size);
     if (ret)
         return ret;
 

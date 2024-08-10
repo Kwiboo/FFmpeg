@@ -51,7 +51,19 @@ int ff_v4l2_request_reset_frame(AVCodecContext *avctx, AVFrame *frame)
     return 0;
 }
 
-int ff_v4l2_request_append_output_buffer(AVCodecContext *avctx, AVFrame *frame, const uint8_t *data, uint32_t size)
+int ff_v4l2_request_start_frame(AVCodecContext *avctx,
+                                V4L2RequestPictureContext *pic,
+                                AVFrame *frame)
+{
+    V4L2RequestDescriptor *req = (V4L2RequestDescriptor*)frame->data[0];
+
+    pic->output = &req->output;
+    pic->capture = &req->capture;
+
+    return ff_v4l2_request_reset_frame(avctx, frame);
+}
+
+int ff_v4l2_request_append_output(AVCodecContext *avctx, AVFrame *frame, const uint8_t *data, uint32_t size)
 {
     V4L2RequestDescriptor *req = (V4L2RequestDescriptor*)frame->data[0];
     if (req->output.used + size + (AV_INPUT_BUFFER_PADDING_SIZE * 4) <= req->output.size) {
@@ -265,7 +277,7 @@ static int v4l2_request_set_drm_descriptor(V4L2RequestDescriptor *req, struct v4
     return 0;
 }
 
-static int v4l2_request_queue_decode(AVCodecContext *avctx, AVFrame *frame, struct v4l2_ext_control *control, int count, int first_slice, int last_slice)
+static int v4l2_request_queue_decode(AVCodecContext *avctx, AVFrame *frame, struct v4l2_ext_control *control, int count, bool first_slice, bool last_slice)
 {
     V4L2RequestContext *ctx = avctx->internal->hwaccel_priv_data;
     V4L2RequestDescriptor *req = (V4L2RequestDescriptor*)frame->data[0];
@@ -363,20 +375,20 @@ fail:
     return -1;
 }
 
-int ff_v4l2_request_decode_slice(AVCodecContext *avctx, AVFrame *frame, struct v4l2_ext_control *control, int count, int first_slice, int last_slice)
+int ff_v4l2_request_decode_slice(AVCodecContext *avctx, AVFrame *frame, struct v4l2_ext_control *control, int count, bool first_slice, bool last_slice)
 {
     V4L2RequestDescriptor *req = (V4L2RequestDescriptor*)frame->data[0];
 
     // fall back to queue each slice as a full frame
     if ((req->output.capabilities & V4L2_BUF_CAP_SUPPORTS_M2M_HOLD_CAPTURE_BUF) != V4L2_BUF_CAP_SUPPORTS_M2M_HOLD_CAPTURE_BUF)
-        return v4l2_request_queue_decode(avctx, frame, control, count, 1, 1);
+        return v4l2_request_queue_decode(avctx, frame, control, count, true, true);
 
     return v4l2_request_queue_decode(avctx, frame, control, count, first_slice, last_slice);
 }
 
 int ff_v4l2_request_decode_frame(AVCodecContext *avctx, AVFrame *frame, struct v4l2_ext_control *control, int count)
 {
-    return v4l2_request_queue_decode(avctx, frame, control, count, 1, 1);
+    return v4l2_request_queue_decode(avctx, frame, control, count, true, true);
 }
 
 static int v4l2_request_try_framesize(AVCodecContext *avctx, uint32_t pixelformat)
