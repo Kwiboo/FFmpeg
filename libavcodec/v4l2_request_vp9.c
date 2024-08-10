@@ -21,6 +21,7 @@
 #include "vp9dec.h"
 
 typedef struct V4L2RequestControlsVP9 {
+    V4L2RequestPictureContext pic;
     struct v4l2_ctrl_vp9_frame decode_params;
     struct v4l2_ctrl_vp9_compressed_hdr chp;
 } V4L2RequestControlsVP9;
@@ -201,20 +202,26 @@ static int v4l2_request_vp9_start_frame(AVCodecContext *avctx,
     const VP9Context *s = avctx->priv_data;
     const VP9Frame *f = &s->s.frames[CUR_FRAME];
     V4L2RequestControlsVP9 *controls = f->hwaccel_picture_private;
+    int ret;
+
+    ret = ff_v4l2_request_start_frame(avctx, &controls->pic, f->tf.f);
+    if (ret)
+        return ret;
 
     v4l2_request_vp9_set_frame_ctx(avctx);
 
     fill_frame(&controls->decode_params, avctx);
 
-    return ff_v4l2_request_reset_frame(avctx, f->tf.f);
+    return 0;
 }
 
 static int v4l2_request_vp9_decode_slice(AVCodecContext *avctx, const uint8_t *buffer, uint32_t size)
 {
     const VP9Context *s = avctx->priv_data;
     const VP9Frame *f = &s->s.frames[CUR_FRAME];
+    V4L2RequestControlsVP9 *controls = f->hwaccel_picture_private;
 
-    return ff_v4l2_request_append_output(avctx, f->tf.f, buffer, size);
+    return ff_v4l2_request_append_output(avctx, &controls->pic, buffer, size);
 }
 
 static int v4l2_request_vp9_end_frame(AVCodecContext *avctx)

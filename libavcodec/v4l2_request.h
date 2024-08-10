@@ -76,7 +76,7 @@ int ff_v4l2_request_init(AVCodecContext *avctx,
 uint64_t ff_v4l2_request_get_capture_timestamp(AVFrame *frame);
 
 int ff_v4l2_request_append_output(AVCodecContext *avctx,
-                                  AVFrame *frame,
+                                  V4L2RequestPictureContext *pic,
                                   const uint8_t *data, uint32_t size);
 
 int ff_v4l2_request_decode_slice(AVCodecContext *avctx,
@@ -88,8 +88,8 @@ int ff_v4l2_request_decode_frame(AVCodecContext *avctx,
                                  AVFrame *frame,
                                  struct v4l2_ext_control *control, int count);
 
-int ff_v4l2_request_reset_frame(AVCodecContext *avctx,
-                                AVFrame *frame);
+int ff_v4l2_request_reset_picture(AVCodecContext *avctx,
+                                  V4L2RequestPictureContext *pic);
 
 int ff_v4l2_request_start_frame(AVCodecContext *avctx,
                                 V4L2RequestPictureContext *pic, AVFrame *frame);

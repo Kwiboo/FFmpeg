@@ -46,7 +46,7 @@ static int v4l2_request_queue_buffer(V4L2RequestContext *ctx, int request_fd,
         .index = buf->index,
         .type = buf->buffer.type,
         .memory = buf->buffer.memory,
-        .timestamp.tv_usec = buf->index + 1,
+        .timestamp = buf->buffer.timestamp,
         .bytesused = buf->used,
         .request_fd = request_fd,
         .flags = ((request_fd >= 0) ? V4L2_BUF_FLAG_REQUEST_FD : 0) | flags,
@@ -84,25 +84,24 @@ static int v4l2_request_dequeue_buffer(V4L2RequestContext *ctx,
     if (ioctl(ctx->video_fd, VIDIOC_DQBUF, &buffer) < 0)
         return AVERROR(errno);
 
-    //buf->buffer.timestamp = buffer.timestamp;
     return 0;
 }
 
 int ff_v4l2_request_append_output(AVCodecContext *avctx,
-                                  AVFrame *frame,
+                                  V4L2RequestPictureContext *pic,
                                   const uint8_t *data, uint32_t size)
 {
-    V4L2RequestFrameDescriptor *desc = v4l2_request_framedesc(frame);
+    V4L2RequestContext *ctx = v4l2_request_context(avctx);
 
     // Append data to output buffer and ensure there is enough space for padding
-    if (desc->output.used + size + INPUT_BUFFER_PADDING_SIZE <= desc->output.size) {
-        memcpy(desc->output.addr + desc->output.used, data, size);
-        desc->output.used += size;
+    if (pic->output->used + size + INPUT_BUFFER_PADDING_SIZE <= pic->output->size) {
+        memcpy(pic->output->addr + pic->output->used, data, size);
+        pic->output->used += size;
         return 0;
     } else {
-        av_log(avctx, AV_LOG_ERROR,
+        av_log(ctx, AV_LOG_ERROR,
                "Failed to append %u bytes data to output buffer %d (%u of %u used)\n",
-               size, desc->output.index, desc->output.used, desc->output.size);
+               size, pic->output->index, pic->output->used, pic->output->size);
         return AVERROR(ENOMEM);
     }
 }
@@ -129,6 +128,9 @@ static int v4l2_request_queue_decode(AVCodecContext *avctx,
 
     // Ensure there is zero padding at the end of bitstream data
     memset(req->output.addr + req->output.used, 0, INPUT_BUFFER_PADDING_SIZE);
+
+    // Use timestamp of the capture buffer for V4L2 frame reference
+    req->output.buffer.timestamp = req->capture.buffer.timestamp;
 
     /*
      * Queue the output buffer of current request. The capture buffer may be
@@ -232,11 +234,10 @@ int ff_v4l2_request_decode_frame(AVCodecContext *avctx,
     return v4l2_request_queue_decode(avctx, frame, control, count, true, true);
 }
 
-int ff_v4l2_request_reset_frame(AVCodecContext *avctx, AVFrame *frame)
+int ff_v4l2_request_reset_picture(AVCodecContext *avctx, V4L2RequestPictureContext *pic)
 {
-    V4L2RequestFrameDescriptor *desc = v4l2_request_framedesc(frame);
-
-    desc->output.used = 0;
+    // Reset used state
+    pic->output->used = 0;
 
     return 0;
 }
@@ -247,8 +248,11 @@ int ff_v4l2_request_start_frame(AVCodecContext *avctx,
 {
     V4L2RequestFrameDescriptor *desc = v4l2_request_framedesc(frame);
 
+    // Output buffer used for current frame
     pic->output = &desc->output;
+
+    // Capture buffer used for current frame
     pic->capture = &desc->capture;
 
-    return ff_v4l2_request_reset_frame(avctx, frame);
+    return ff_v4l2_request_reset_picture(avctx, pic);
 }

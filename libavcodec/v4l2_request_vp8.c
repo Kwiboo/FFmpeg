@@ -21,6 +21,7 @@
 #include "vp8.h"
 
 typedef struct V4L2RequestControlsVP8 {
+    V4L2RequestPictureContext pic;
     struct v4l2_ctrl_vp8_frame ctrl;
 } V4L2RequestControlsVP8;
 
@@ -31,8 +32,7 @@ static int v4l2_request_vp8_start_frame(AVCodecContext          *avctx,
     const VP8Context *s = avctx->priv_data;
     V4L2RequestControlsVP8 *controls = s->framep[VP8_FRAME_CURRENT]->hwaccel_picture_private;
 
-    memset(&controls->ctrl, 0, sizeof(controls->ctrl));
-    return ff_v4l2_request_reset_frame(avctx, s->framep[VP8_FRAME_CURRENT]->tf.f);
+    return ff_v4l2_request_start_frame(avctx, &controls->pic, s->framep[VP8_FRAME_CURRENT]->tf.f);
 }
 
 static int v4l2_request_vp8_end_frame(AVCodecContext *avctx)
@@ -155,7 +155,7 @@ static int v4l2_request_vp8_decode_slice(AVCodecContext *avctx,
     frame->quant.uv_dc_delta = s->quant.uvdc_delta;
     frame->quant.uv_ac_delta = s->quant.uvac_delta;
 
-    return ff_v4l2_request_append_output(avctx, s->framep[VP8_FRAME_CURRENT]->tf.f, buffer, size);
+    return ff_v4l2_request_append_output(avctx, &controls->pic, buffer, size);
 }
 
 static int v4l2_request_vp8_init(AVCodecContext *avctx)

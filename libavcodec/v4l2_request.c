@@ -151,13 +151,6 @@ static int v4l2_request_buffer_alloc(V4L2RequestContext *ctx,
         return AVERROR(errno);
     }
 
-    /*
-     * Use buffer index as base for V4L2 frame reference.
-     * This works because a capture buffer is closely tied to a AVFrame
-     * and FFmpeg handle all frame reference tracking for us.
-     */
-    buf->buffer.timestamp.tv_usec = buf->index + 1;
-
     // Output buffers is mapped and capture buffers is exported
     if (V4L2_TYPE_IS_OUTPUT(type)) {
         off_t offset = V4L2_TYPE_IS_MULTIPLANAR(type) ?
@@ -188,6 +181,13 @@ static int v4l2_request_buffer_alloc(V4L2RequestContext *ctx,
 
         // Used in the AVDRMFrameDescriptor for decoded frames
         buf->fd = exportbuffer.fd;
+
+        /*
+         * Use buffer index as base for V4L2 frame reference.
+         * This works because a capture buffer is closely tied to a AVFrame
+         * and FFmpeg handle all frame reference tracking for us.
+         */
+        buf->buffer.timestamp.tv_usec = buf->index + 1;
     }
 
     return 0;

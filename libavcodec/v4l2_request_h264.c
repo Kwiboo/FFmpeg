@@ -372,18 +372,18 @@ static int v4l2_request_h264_decode_slice(AVCodecContext *avctx,
         if (ret)
             return ret;
 
-        ff_v4l2_request_reset_frame(avctx, h->cur_pic_ptr->f);
+        ff_v4l2_request_reset_picture(avctx, &controls->pic);
         controls->first_slice = 0;
     }
 
     if (ctx->start_code == V4L2_STATELESS_H264_START_CODE_ANNEX_B) {
-        ret = ff_v4l2_request_append_output(avctx, h->cur_pic_ptr->f,
+        ret = ff_v4l2_request_append_output(avctx, &controls->pic,
                                             nalu_slice_start_code, 3);
         if (ret)
             return ret;
     }
 
-    ret = ff_v4l2_request_append_output(avctx, h->cur_pic_ptr->f, buffer, size);
+    ret = ff_v4l2_request_append_output(avctx, &controls->pic, buffer, size);
     if (ret)
         return ret;
 

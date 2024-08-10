@@ -569,7 +569,7 @@ static int v4l2_request_hevc_decode_slice(AVCodecContext *avctx,
         if (ret)
             return ret;
 
-        ff_v4l2_request_reset_frame(avctx, h->ref->frame);
+        ff_v4l2_request_reset_picture(avctx, &controls->pic);
         slice = controls->num_slice_params = 0;
         controls->num_entry_point_offsets = 0;
         controls->first_slice = false;
@@ -594,14 +594,14 @@ static int v4l2_request_hevc_decode_slice(AVCodecContext *avctx,
     }
 
     if (ctx->start_code == V4L2_STATELESS_HEVC_START_CODE_ANNEX_B) {
-        ret = ff_v4l2_request_append_output(avctx, h->ref->frame,
+        ret = ff_v4l2_request_append_output(avctx, &controls->pic,
                                             nalu_slice_start_code, 3);
         if (ret)
             return ret;
         extra_size = 3;
     }
 
-    ret = ff_v4l2_request_append_output(avctx, h->ref->frame, buffer, size);
+    ret = ff_v4l2_request_append_output(avctx, &controls->pic, buffer, size);
     if (ret)
         return ret;
 
