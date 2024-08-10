@@ -637,7 +637,7 @@ static int v4l2_request_init_context(AVCodecContext *avctx)
                av_fourcc2str(fmt->pixelformat), fmt->width, fmt->height, fmt->bytesperline, fmt->sizeimage);
     }
 
-    ret = ff_decode_get_hw_frames_ctx(avctx, AV_HWDEVICE_TYPE_DRM);
+    ret = ff_decode_get_hw_frames_ctx(avctx, AV_HWDEVICE_TYPE_V4L2REQUEST);
     if (ret < 0)
         goto fail;
 

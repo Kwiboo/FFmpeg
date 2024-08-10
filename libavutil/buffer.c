@@ -322,13 +322,7 @@ static void buffer_pool_free(AVBufferPool *pool)
 void av_buffer_pool_flush(AVBufferPool *pool)
 {
     ff_mutex_lock(&pool->mutex);
-    while (pool->pool) {
-        BufferPoolEntry *buf = pool->pool;
-        pool->pool = buf->next;
-
-        buf->free(buf->opaque, buf->data);
-        av_freep(&buf);
-    }
+    buffer_pool_flush(pool);
     ff_mutex_unlock(&pool->mutex);
 }
 

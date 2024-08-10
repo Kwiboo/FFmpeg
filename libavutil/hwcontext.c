@@ -63,6 +63,9 @@ static const HWContextType * const hw_table[] = {
 #if CONFIG_VULKAN
     &ff_hwcontext_type_vulkan,
 #endif
+#if CONFIG_V4L2_REQUEST
+    &ff_hwcontext_type_v4l2request,
+#endif
     NULL,
 };
 
@@ -73,6 +76,7 @@ static const char *const hw_type_names[] = {
     [AV_HWDEVICE_TYPE_D3D11VA] = "d3d11va",
     [AV_HWDEVICE_TYPE_OPENCL] = "opencl",
     [AV_HWDEVICE_TYPE_QSV]    = "qsv",
+    [AV_HWDEVICE_TYPE_V4L2REQUEST] = "v4l2request",
     [AV_HWDEVICE_TYPE_VAAPI]  = "vaapi",
     [AV_HWDEVICE_TYPE_VDPAU]  = "vdpau",
     [AV_HWDEVICE_TYPE_VIDEOTOOLBOX] = "videotoolbox",
