@@ -212,9 +212,9 @@ static void v4l2_request_frame_free(void *opaque, uint8_t *data)
 {
     V4L2RequestFrameDescriptor *desc = (V4L2RequestFrameDescriptor *)data;
 
-    if (desc->request_fd >= 0) {
-        close(desc->request_fd);
-	desc->request_fd = -1;
+    if (desc->output.fd >= 0) {
+        close(desc->output.fd);
+        desc->output.fd = -1;
     }
 
     v4l2_request_buffer_free(&desc->capture);
@@ -241,7 +241,6 @@ static AVBufferRef *v4l2_request_frame_alloc(void *opaque, size_t size)
     }
 
     desc = (V4L2RequestFrameDescriptor *)data;
-    desc->request_fd = -1;
     desc->output.fd = -1;
     desc->capture.fd = -1;
 
@@ -264,7 +263,7 @@ static AVBufferRef *v4l2_request_frame_alloc(void *opaque, size_t size)
     }
 
     // Allocate request for this AVFrame
-    if (ioctl(ctx->media_fd, MEDIA_IOC_REQUEST_ALLOC, &desc->request_fd) < 0) {
+    if (ioctl(ctx->media_fd, MEDIA_IOC_REQUEST_ALLOC, &desc->output.fd) < 0) {
         av_log(ctx, AV_LOG_ERROR, "Failed to allocate request: %s (%d)\n",
                strerror(errno), errno);
         av_buffer_unref(&ref);
@@ -335,15 +334,8 @@ int ff_v4l2_request_uninit(AVCodecContext *avctx)
             av_log(ctx, AV_LOG_WARNING, "Failed to stop capture streaming: %s (%d)\n",
                    strerror(errno), errno);
         }
-    }
 
-    if (avctx->hw_frames_ctx) {
-        AVHWFramesContext *hwfc = (AVHWFramesContext*)avctx->hw_frames_ctx->data;
-        av_buffer_pool_flush(hwfc->pool);
-    }
-
-    // Close video device file descriptor
-    if (ctx->video_fd >= 0) {
+        // Close video device file descriptor
         close(ctx->video_fd);
         ctx->video_fd = -1;
     }
@@ -373,7 +365,7 @@ static int v4l2_request_init_context(AVCodecContext *avctx)
         goto fail;
     }
 
-    // Create frame context and allocate initial capture buffers
+    // Create frame context and allocate initial buffers
     ret = ff_decode_get_hw_frames_ctx(avctx, AV_HWDEVICE_TYPE_V4L2REQUEST);
     if (ret < 0)
         goto fail;

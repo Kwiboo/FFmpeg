@@ -107,40 +107,39 @@ int ff_v4l2_request_append_output(AVCodecContext *avctx,
 }
 
 static int v4l2_request_queue_decode(AVCodecContext *avctx,
-                                     AVFrame *frame,
+                                     V4L2RequestPictureContext *pic,
                                      struct v4l2_ext_control *control, int count,
                                      bool first_slice, bool last_slice)
 {
     V4L2RequestContext *ctx = v4l2_request_context(avctx);
-    V4L2RequestFrameDescriptor *req = v4l2_request_framedesc(frame);
     struct timeval tv = { 2, 0 };
     fd_set except_fds;
     uint32_t flags;
     int ret;
 
     // Set codec controls for current request
-    ret = ff_v4l2_request_set_request_controls(ctx, req->request_fd, control, count);
+    ret = ff_v4l2_request_set_request_controls(ctx, pic->output->fd, control, count);
     if (ret < 0) {
         av_log(ctx, AV_LOG_ERROR, "Failed to set %d control(s) for request %d: %s (%d)\n",
-               count, req->request_fd, strerror(errno), errno);
+               count, pic->output->fd, strerror(errno), errno);
         goto fail;
     }
 
     // Ensure there is zero padding at the end of bitstream data
-    memset(req->output.addr + req->output.used, 0, INPUT_BUFFER_PADDING_SIZE);
+    memset(pic->output->addr + pic->output->used, 0, INPUT_BUFFER_PADDING_SIZE);
 
     // Use timestamp of the capture buffer for V4L2 frame reference
-    req->output.buffer.timestamp = req->capture.buffer.timestamp;
+    pic->output->buffer.timestamp = pic->capture->buffer.timestamp;
 
     /*
      * Queue the output buffer of current request. The capture buffer may be
      * hold by the V4L2 decoder unless this is the last slice of a frame.
      */
     flags = last_slice ? 0 : V4L2_BUF_FLAG_M2M_HOLD_CAPTURE_BUF;
-    ret = v4l2_request_queue_buffer(ctx, req->request_fd, &req->output, flags);
+    ret = v4l2_request_queue_buffer(ctx, pic->output->fd, pic->output, flags);
     if (ret < 0) {
         av_log(ctx, AV_LOG_ERROR, "Failed to queue output buffer %d for request %d: %s (%d)\n",
-               req->output.index, req->request_fd, strerror(errno), errno);
+               pic->output->index, pic->output->fd, strerror(errno), errno);
         ret = AVERROR(errno);
         goto fail;
     }
@@ -152,33 +151,33 @@ static int v4l2_request_queue_decode(AVCodecContext *avctx,
          * current request, otherwise frames may be output in wrong order or
          * wrong capture buffer could get used as a reference frame.
          */
-        ret = v4l2_request_queue_buffer(ctx, -1, &req->capture, 0);
+        ret = v4l2_request_queue_buffer(ctx, -1, pic->capture, 0);
         if (ret < 0) {
             av_log(ctx, AV_LOG_ERROR, "Failed to queue capture buffer %d for request %d: %s (%d)\n",
-                   req->capture.index, req->request_fd, strerror(errno), errno);
+                   pic->capture->index, pic->output->fd, strerror(errno), errno);
             ret = AVERROR(errno);
             goto fail;
         }
     }
 
     // Queue current request
-    ret = ioctl(req->request_fd, MEDIA_REQUEST_IOC_QUEUE, NULL);
+    ret = ioctl(pic->output->fd, MEDIA_REQUEST_IOC_QUEUE, NULL);
     if (ret < 0) {
         av_log(ctx, AV_LOG_ERROR, "Failed to queue request object %d: %s (%d)\n",
-               req->request_fd, strerror(errno), errno);
+               pic->output->fd, strerror(errno), errno);
         ret = AVERROR(errno);
         goto fail;
     }
 
     FD_ZERO(&except_fds);
-    FD_SET(req->request_fd, &except_fds);
+    FD_SET(pic->output->fd, &except_fds);
 
-    ret = select(req->request_fd + 1, NULL, NULL, &except_fds, &tv);
+    ret = select(pic->output->fd + 1, NULL, NULL, &except_fds, &tv);
     if (ret == 0) {
-        av_log(ctx, AV_LOG_ERROR, "%s: request %d timeout\n", __func__, req->request_fd);
+        av_log(ctx, AV_LOG_ERROR, "%s: request %d timeout\n", __func__, pic->output->fd);
         goto fail;
     } else if (ret < 0) {
-        av_log(ctx, AV_LOG_ERROR, "%s: select request %d failed, %s (%d)\n", __func__, req->request_fd, strerror(errno), errno);
+        av_log(ctx, AV_LOG_ERROR, "%s: select request %d failed, %s (%d)\n", __func__, pic->output->fd, strerror(errno), errno);
         goto fail;
     }
 
@@ -193,45 +192,40 @@ static int v4l2_request_queue_decode(AVCodecContext *avctx,
     }
 
     // Reinit the request object
-    if (ioctl(req->request_fd, MEDIA_REQUEST_IOC_REINIT, NULL) < 0) {
+    if (ioctl(pic->output->fd, MEDIA_REQUEST_IOC_REINIT, NULL) < 0) {
         av_log(ctx, AV_LOG_ERROR, "Failed to reinit request object %d: %s (%d)\n",
-               req->request_fd, strerror(errno), errno);
+               pic->output->fd, strerror(errno), errno);
         ret = AVERROR(errno);
         goto fail;
     }
 
     ret = 0;
 fail:
-
-    av_log(avctx, AV_LOG_DEBUG, "%s: ctx=%p used=%u controls=%d capture.index=%d output.index=%d request_fd=%d first_slice=%d last_slice=%d ret=%d\n", __func__,
-           ctx, req->output.used, count, req->capture.index, req->output.index, req->request_fd, first_slice, last_slice, ret);
     return ret;
 }
 
 int ff_v4l2_request_decode_slice(AVCodecContext *avctx,
-                                 AVFrame *frame,
+                                 V4L2RequestPictureContext *pic,
                                  struct v4l2_ext_control *control, int count,
                                  bool first_slice, bool last_slice)
 {
-    V4L2RequestFrameDescriptor *desc = v4l2_request_framedesc(frame);
-
     /*
      * Fallback to queue each slice as a full frame when holding capture
      * buffers is not supported by the driver.
      */
-    if ((desc->output.capabilities & V4L2_BUF_CAP_SUPPORTS_M2M_HOLD_CAPTURE_BUF) !=
+    if ((pic->output->capabilities & V4L2_BUF_CAP_SUPPORTS_M2M_HOLD_CAPTURE_BUF) !=
          V4L2_BUF_CAP_SUPPORTS_M2M_HOLD_CAPTURE_BUF)
-        return v4l2_request_queue_decode(avctx, frame, control, count, true, true);
+        return v4l2_request_queue_decode(avctx, pic, control, count, true, true);
 
-    return v4l2_request_queue_decode(avctx, frame, control, count,
+    return v4l2_request_queue_decode(avctx, pic, control, count,
                                      first_slice, last_slice);
 }
 
 int ff_v4l2_request_decode_frame(AVCodecContext *avctx,
-                                 AVFrame *frame,
+                                 V4L2RequestPictureContext *pic,
                                  struct v4l2_ext_control *control, int count)
 {
-    return v4l2_request_queue_decode(avctx, frame, control, count, true, true);
+    return v4l2_request_queue_decode(avctx, pic, control, count, true, true);
 }
 
 int ff_v4l2_request_reset_picture(AVCodecContext *avctx, V4L2RequestPictureContext *pic)

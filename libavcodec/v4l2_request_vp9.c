@@ -229,7 +229,6 @@ static int v4l2_request_vp9_end_frame(AVCodecContext *avctx)
     const VP9Context *s = avctx->priv_data;
     const VP9Frame *f = &s->s.frames[CUR_FRAME];
     V4L2RequestControlsVP9 *controls = f->hwaccel_picture_private;
-    int ret;
 
     struct v4l2_ext_control control[] = {
         {
@@ -244,14 +243,8 @@ static int v4l2_request_vp9_end_frame(AVCodecContext *avctx)
         },
     };
 
-    ret = ff_v4l2_request_decode_frame(avctx, f->tf.f, control, FF_ARRAY_ELEMS(control));
-    if (ret)
-        return ret;
-
-    if (!s->s.h.refreshctx)
-        return 0;
-
-    return 0;
+    return ff_v4l2_request_decode_frame(avctx, &controls->pic,
+                                        control, FF_ARRAY_ELEMS(control));
 }
 
 static int v4l2_request_vp9_init(AVCodecContext *avctx)
@@ -285,5 +278,4 @@ const AVHWAccel ff_vp9_v4l2request_hwaccel = {
     .uninit         = ff_v4l2_request_uninit,
     .priv_data_size = sizeof(V4L2RequestContext),
     .frame_params   = ff_v4l2_request_frame_params,
-    .caps_internal  = HWACCEL_CAP_ASYNC_SAFE,
 };

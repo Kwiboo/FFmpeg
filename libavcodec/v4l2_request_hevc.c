@@ -546,10 +546,10 @@ static int v4l2_request_hevc_queue_decode(AVCodecContext *avctx, bool last_slice
     }
 
     if (ctx->decode_mode == V4L2_STATELESS_HEVC_DECODE_MODE_SLICE_BASED)
-        return ff_v4l2_request_decode_slice(avctx, h->ref->frame, control, count,
+        return ff_v4l2_request_decode_slice(avctx, &controls->pic, control, count,
                                             controls->first_slice, last_slice);
 
-    return ff_v4l2_request_decode_frame(avctx, h->ref->frame, control, count);
+    return ff_v4l2_request_decode_frame(avctx, &controls->pic, control, count);
 }
 
 static int v4l2_request_hevc_decode_slice(AVCodecContext *avctx,

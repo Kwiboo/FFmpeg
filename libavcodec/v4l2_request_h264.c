@@ -348,11 +348,11 @@ static int v4l2_request_h264_queue_decode(AVCodecContext *avctx, bool last_slice
 
     if (ctx->decode_mode == V4L2_STATELESS_H264_DECODE_MODE_SLICE_BASED) {
         int count = FF_ARRAY_ELEMS(control) - (controls->pred_weights_required ? 0 : 1);
-        return ff_v4l2_request_decode_slice(avctx, h->cur_pic_ptr->f, control, count,
+        return ff_v4l2_request_decode_slice(avctx, &controls->pic, control, count,
                                             controls->first_slice, last_slice);
     }
 
-    return ff_v4l2_request_decode_frame(avctx, h->cur_pic_ptr->f,
+    return ff_v4l2_request_decode_frame(avctx, &controls->pic,
                                         control, FF_ARRAY_ELEMS(control) - 2);
 }
 

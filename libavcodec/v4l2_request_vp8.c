@@ -39,6 +39,7 @@ static int v4l2_request_vp8_end_frame(AVCodecContext *avctx)
 {
     const VP8Context *s = avctx->priv_data;
     V4L2RequestControlsVP8 *controls = s->framep[VP8_FRAME_CURRENT]->hwaccel_picture_private;
+
     struct v4l2_ext_control control[] = {
         {
             .id = V4L2_CID_STATELESS_VP8_FRAME,
@@ -47,7 +48,7 @@ static int v4l2_request_vp8_end_frame(AVCodecContext *avctx)
         },
     };
 
-    return ff_v4l2_request_decode_frame(avctx, s->framep[VP8_FRAME_CURRENT]->tf.f,
+    return ff_v4l2_request_decode_frame(avctx, &controls->pic,
                                         control, FF_ARRAY_ELEMS(control));
 }
 
@@ -176,5 +177,4 @@ const AVHWAccel ff_vp8_v4l2request_hwaccel = {
     .uninit         = ff_v4l2_request_uninit,
     .priv_data_size = sizeof(V4L2RequestContext),
     .frame_params   = ff_v4l2_request_frame_params,
-    .caps_internal  = HWACCEL_CAP_ASYNC_SAFE,
 };

@@ -145,7 +145,7 @@ static int v4l2_request_mpeg2_end_frame(AVCodecContext *avctx)
         },
     };
 
-    return ff_v4l2_request_decode_frame(avctx, s->current_picture_ptr->f,
+    return ff_v4l2_request_decode_frame(avctx, &controls->pic,
                                         control, FF_ARRAY_ELEMS(control));
 }
 

@@ -26,9 +26,8 @@
 
 typedef struct V4L2RequestFrameDescriptor {
     AVDRMFrameDescriptor base;
-    int request_fd;
-    V4L2RequestBuffer output;
     V4L2RequestBuffer capture;
+    V4L2RequestBuffer output;
 } V4L2RequestFrameDescriptor;
 
 static inline V4L2RequestContext *v4l2_request_context(AVCodecContext *avctx)
