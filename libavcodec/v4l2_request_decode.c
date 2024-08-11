@@ -87,6 +87,32 @@ static int v4l2_request_dequeue_buffer(V4L2RequestContext *ctx,
     return 0;
 }
 
+static V4L2RequestBuffer *v4l2_request_next_output(V4L2RequestContext *ctx)
+{
+    int index;
+    V4L2RequestBuffer *output;
+
+    ff_mutex_lock(&ctx->mutex);
+
+    // Use next output buffer in the circular queue
+    index = atomic_load(&ctx->next_output);
+    output = &ctx->output[index];
+    atomic_store(&ctx->next_output, (index + 1) % FF_ARRAY_ELEMS(ctx->output));
+
+    ff_mutex_unlock(&ctx->mutex);
+
+    // Reset used state
+    output->used = 0;
+
+    return output;
+
+fail:
+    ff_mutex_unlock(&ctx->mutex);
+    av_log(ctx, AV_LOG_ERROR, "Failed waiting on output buffer %d\n",
+           output->index);
+    return NULL;
+}
+
 int ff_v4l2_request_append_output(AVCodecContext *avctx,
                                   V4L2RequestPictureContext *pic,
                                   const uint8_t *data, uint32_t size)
@@ -251,8 +277,12 @@ int ff_v4l2_request_decode_frame(AVCodecContext *avctx,
 
 int ff_v4l2_request_reset_picture(AVCodecContext *avctx, V4L2RequestPictureContext *pic)
 {
-    // Reset used state
-    pic->output->used = 0;
+    V4L2RequestContext *ctx = v4l2_request_context(avctx);
+
+    // Get and wait on next output buffer from circular queue
+    pic->output = v4l2_request_next_output(ctx);
+    if (!pic->output)
+        return AVERROR(EINVAL);
 
     return 0;
 }
@@ -262,12 +292,15 @@ int ff_v4l2_request_start_frame(AVCodecContext *avctx,
                                 AVFrame *frame)
 {
     V4L2RequestFrameDescriptor *desc = v4l2_request_framedesc(frame);
+    int ret;
 
-    // Output buffer used for current frame
-    pic->output = &desc->output;
+    // Get next output buffer from circular queue
+    ret = ff_v4l2_request_reset_picture(avctx, pic);
+    if (ret)
+        return ret;
 
     // Capture buffer used for current frame
     pic->capture = &desc->capture;
 
-    return ff_v4l2_request_reset_picture(avctx, pic);
+    return 0;
 }

@@ -19,11 +19,13 @@
 #ifndef AVCODEC_V4L2_REQUEST_H
 #define AVCODEC_V4L2_REQUEST_H
 
+#include <stdatomic.h>
 #include <stdbool.h>
 
 #include <linux/videodev2.h>
 
 #include "libavutil/hwcontext_drm.h"
+#include "libavutil/thread.h"
 
 typedef struct V4L2RequestBuffer {
     int index;
@@ -44,6 +46,9 @@ typedef struct V4L2RequestContext {
     int video_fd;
     struct v4l2_format format;
     enum v4l2_buf_type output_type;
+    AVMutex mutex;
+    V4L2RequestBuffer output[4];
+    atomic_int_least8_t next_output;
     int (*post_probe)(AVCodecContext *avctx);
 } V4L2RequestContext;
 

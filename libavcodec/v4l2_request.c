@@ -212,13 +212,7 @@ static void v4l2_request_frame_free(void *opaque, uint8_t *data)
 {
     V4L2RequestFrameDescriptor *desc = (V4L2RequestFrameDescriptor *)data;
 
-    if (desc->output.fd >= 0) {
-        close(desc->output.fd);
-        desc->output.fd = -1;
-    }
-
     v4l2_request_buffer_free(&desc->capture);
-    v4l2_request_buffer_free(&desc->output);
 
     av_free(data);
 }
@@ -241,14 +235,7 @@ static AVBufferRef *v4l2_request_frame_alloc(void *opaque, size_t size)
     }
 
     desc = (V4L2RequestFrameDescriptor *)data;
-    desc->output.fd = -1;
     desc->capture.fd = -1;
-
-    // Create a V4L2 output buffer for this AVFrame
-    if (v4l2_request_buffer_alloc(ctx, &desc->output, ctx->output_type) < 0) {
-        av_buffer_unref(&ref);
-        return NULL;
-    }
 
     // Create a V4L2 capture buffer for this AVFrame
     if (v4l2_request_buffer_alloc(ctx, &desc->capture, ctx->format.type) < 0) {
@@ -258,14 +245,6 @@ static AVBufferRef *v4l2_request_frame_alloc(void *opaque, size_t size)
 
     // Set AVDRMFrameDescriptor of this AVFrame
     if (ff_v4l2_request_set_drm_descriptor(desc, &ctx->format) < 0) {
-        av_buffer_unref(&ref);
-        return NULL;
-    }
-
-    // Allocate request for this AVFrame
-    if (ioctl(ctx->media_fd, MEDIA_IOC_REQUEST_ALLOC, &desc->output.fd) < 0) {
-        av_log(ctx, AV_LOG_ERROR, "Failed to allocate request: %s (%d)\n",
-               strerror(errno), errno);
         av_buffer_unref(&ref);
         return NULL;
     }
@@ -335,6 +314,11 @@ int ff_v4l2_request_uninit(AVCodecContext *avctx)
                    strerror(errno), errno);
         }
 
+        // Release output buffers
+        for (int i = 0; i < FF_ARRAY_ELEMS(ctx->output); i++) {
+            v4l2_request_buffer_free(&ctx->output[i]);
+        }
+
         // Close video device file descriptor
         close(ctx->video_fd);
         ctx->video_fd = -1;
@@ -349,6 +333,8 @@ int ff_v4l2_request_uninit(AVCodecContext *avctx)
         ctx->media_fd = -1;
     }
 
+    ff_mutex_destroy(&ctx->mutex);
+
     return 0;
 }
 
@@ -356,6 +342,14 @@ static int v4l2_request_init_context(AVCodecContext *avctx)
 {
     V4L2RequestContext *ctx = v4l2_request_context(avctx);
     int ret;
+
+    // Initialize context state
+    ff_mutex_init(&ctx->mutex, NULL);
+    for (int i = 0; i < FF_ARRAY_ELEMS(ctx->output); i++) {
+        ctx->output[i].index = i;
+        ctx->output[i].fd = -1;
+    }
+    atomic_init(&ctx->next_output, 0);
 
     // Get format details for capture buffers
     if (ioctl(ctx->video_fd, VIDIOC_G_FMT, &ctx->format) < 0) {
@@ -365,10 +359,27 @@ static int v4l2_request_init_context(AVCodecContext *avctx)
         goto fail;
     }
 
-    // Create frame context and allocate initial buffers
+    // Create frame context and allocate initial capture buffers
     ret = ff_decode_get_hw_frames_ctx(avctx, AV_HWDEVICE_TYPE_V4L2REQUEST);
     if (ret < 0)
         goto fail;
+
+    // Allocate output buffers for circular queue
+    for (int i = 0; i < FF_ARRAY_ELEMS(ctx->output); i++) {
+        ret = v4l2_request_buffer_alloc(ctx, &ctx->output[i], ctx->output_type);
+        if (ret < 0)
+            goto fail;
+    }
+
+    // Allocate requests for circular queue
+    for (int i = 0; i < FF_ARRAY_ELEMS(ctx->output); i++) {
+        if (ioctl(ctx->media_fd, MEDIA_IOC_REQUEST_ALLOC, &ctx->output[i].fd) < 0) {
+            av_log(ctx, AV_LOG_ERROR, "Failed to allocate request %d: %s (%d)\n",
+                   i, strerror(errno), errno);
+            ret = AVERROR(errno);
+            goto fail;
+        }
+    }
 
     // Start output queue
     if (ioctl(ctx->video_fd, VIDIOC_STREAMON, &ctx->output_type) < 0) {
