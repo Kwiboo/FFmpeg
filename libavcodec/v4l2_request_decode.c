@@ -112,10 +112,20 @@ static int v4l2_request_queue_decode(AVCodecContext *avctx,
                                      bool first_slice, bool last_slice)
 {
     V4L2RequestContext *ctx = v4l2_request_context(avctx);
-    struct timeval tv = { 2, 0 };
-    fd_set except_fds;
+    bool request_done, output_done, capture_done;
     uint32_t flags;
     int ret;
+
+    struct pollfd pollfd[] = {
+        {
+            .fd = pic->output->fd,
+            .events = POLLPRI,
+        },
+        {
+            .fd = ctx->video_fd,
+            .events = POLLOUT | POLLIN,
+        },
+    };
 
     // Set codec controls for current request
     ret = ff_v4l2_request_set_request_controls(ctx, pic->output->fd, control, count);
@@ -169,17 +179,28 @@ static int v4l2_request_queue_decode(AVCodecContext *avctx,
         goto fail;
     }
 
-    FD_ZERO(&except_fds);
-    FD_SET(pic->output->fd, &except_fds);
+    request_done = output_done = false;
+    capture_done = !last_slice;
 
-    ret = select(pic->output->fd + 1, NULL, NULL, &except_fds, &tv);
-    if (ret == 0) {
-        av_log(ctx, AV_LOG_ERROR, "%s: request %d timeout\n", __func__, pic->output->fd);
-        goto fail;
-    } else if (ret < 0) {
-        av_log(ctx, AV_LOG_ERROR, "%s: select request %d failed, %s (%d)\n", __func__, pic->output->fd, strerror(errno), errno);
-        goto fail;
-    }
+    do
+    {
+        ret = poll(pollfd, 2, 2000);
+        if (ret <= 0)
+            break;
+
+        if (pollfd[0].revents & (POLLPRI|POLLERR))
+            request_done = true;
+
+        if (pollfd[1].revents & POLLOUT)
+            output_done = true;
+
+        if (pollfd[1].revents & POLLIN)
+            capture_done = true;
+
+    } while (!capture_done || !output_done || !request_done);
+
+    if (ret <= 0 || !capture_done || !output_done || !request_done)
+        av_log(ctx, AV_LOG_ERROR, "poll: ret=%d done=[%d,%d,%d]\n", ret, request_done, output_done, capture_done);
 
     ret = v4l2_request_dequeue_buffer(ctx, ctx->output_type);
     if (ret)
