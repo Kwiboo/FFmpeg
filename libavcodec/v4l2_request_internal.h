@@ -24,9 +24,14 @@
 #include "internal.h"
 #include "v4l2_request.h"
 
+typedef struct V4L2RequestOutputDescriptor {
+    V4L2RequestBuffer output;
+} V4L2RequestOutputDescriptor;
+
 typedef struct V4L2RequestFrameDescriptor {
     AVDRMFrameDescriptor base;
     V4L2RequestBuffer capture;
+    V4L2RequestBuffer output;
 } V4L2RequestFrameDescriptor;
 
 static inline V4L2RequestContext *v4l2_request_context(AVCodecContext *avctx)
@@ -36,7 +41,7 @@ static inline V4L2RequestContext *v4l2_request_context(AVCodecContext *avctx)
 
 static inline V4L2RequestFrameDescriptor *v4l2_request_framedesc(AVFrame *frame)
 {
-    return (V4L2RequestFrameDescriptor *)frame->data[0];
+    return frame ? (V4L2RequestFrameDescriptor *)frame->data[0] : NULL;
 }
 
 enum AVPixelFormat ff_v4l2_request_get_sw_format(struct v4l2_format *format);

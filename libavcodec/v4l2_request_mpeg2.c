@@ -169,4 +169,5 @@ const AVHWAccel ff_mpeg2_v4l2request_hwaccel = {
     .uninit         = ff_v4l2_request_uninit,
     .priv_data_size = sizeof(V4L2RequestContext),
     .frame_params   = ff_v4l2_request_frame_params,
+    .caps_internal  = HWACCEL_CAP_ASYNC_SAFE,
 };

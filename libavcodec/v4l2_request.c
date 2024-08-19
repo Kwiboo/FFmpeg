@@ -110,11 +110,23 @@ static int v4l2_request_buffer_alloc(V4L2RequestContext *ctx,
         .format.type = type,
     };
 
+    av_log(ctx, AV_LOG_DEBUG, "%s: ctx=%p buf=%p type=%u\n", __func__, ctx, buf, type);
+
     // Get format details for the buffer to be created
     if (ioctl(ctx->video_fd, VIDIOC_G_FMT, &buffers.format) < 0) {
         av_log(ctx, AV_LOG_ERROR, "Failed to get format of type %d: %s (%d)\n",
                type, strerror(errno), errno);
         return AVERROR(errno);
+    }
+
+    if (V4L2_TYPE_IS_MULTIPLANAR(buffers.format.type)) {
+        struct v4l2_pix_format_mplane *fmt = &buffers.format.fmt.pix_mp;
+        av_log(ctx, AV_LOG_DEBUG, "%s: ctx=%p pixelformat=%s width=%u height=%u bytesperline=%u sizeimage=%u num_planes=%u\n", __func__,
+               ctx, av_fourcc2str(fmt->pixelformat), fmt->width, fmt->height, fmt->plane_fmt[0].bytesperline, fmt->plane_fmt[0].sizeimage, fmt->num_planes);
+    } else {
+        struct v4l2_pix_format *fmt = &buffers.format.fmt.pix;
+        av_log(ctx, AV_LOG_DEBUG, "%s: ctx=%p pixelformat=%s width=%u height=%u bytesperline=%u sizeimage=%u\n", __func__,
+               ctx, av_fourcc2str(fmt->pixelformat), fmt->width, fmt->height, fmt->bytesperline, fmt->sizeimage);
     }
 
     // Create the buffer
@@ -190,11 +202,16 @@ static int v4l2_request_buffer_alloc(V4L2RequestContext *ctx,
         buf->buffer.timestamp.tv_usec = buf->index + 1;
     }
 
+    av_log(ctx, AV_LOG_DEBUG, "%s: ctx=%p buf=%p index=%d fd=%d addr=%p width=%u height=%u size=%u\n", __func__,
+           ctx, buf, buf->index, buf->fd, buf->addr, buf->width, buf->height, buf->size);
     return 0;
 }
 
 static void v4l2_request_buffer_free(V4L2RequestBuffer *buf)
 {
+    av_log(NULL, AV_LOG_DEBUG, "%s: buf=%p index=%d fd=%d addr=%p width=%u height=%u size=%u\n", __func__,
+           buf, buf->index, buf->fd, buf->addr, buf->width, buf->height, buf->size);
+
     // Unmap output buffers
     if (buf->addr) {
         munmap(buf->addr, buf->size);
@@ -208,9 +225,61 @@ static void v4l2_request_buffer_free(V4L2RequestBuffer *buf)
     }
 }
 
+static void v4l2_request_output_free(void *opaque, uint8_t *data)
+{
+    V4L2RequestOutputDescriptor *desc = (V4L2RequestOutputDescriptor *)data;
+
+    av_log(NULL, AV_LOG_DEBUG, "%s: opaque=%p data=%p\n", __func__, opaque, data);
+
+    v4l2_request_buffer_free(&desc->output);
+
+    av_free(data);
+}
+
+static AVBufferRef *v4l2_request_output_alloc(void *opaque, size_t size)
+{
+    V4L2RequestContext *ctx = opaque;
+    V4L2RequestOutputDescriptor *desc;
+    AVBufferRef *ref;
+    uint8_t *data;
+
+    data = av_mallocz(size);
+    if (!data)
+        return NULL;
+
+    av_log(ctx, AV_LOG_DEBUG, "%s: ctx=%p size=%zu data=%p\n", __func__, ctx, size, data);
+
+    ref = av_buffer_create(data, size, v4l2_request_output_free, ctx, 0);
+    if (!ref) {
+        av_free(data);
+        return NULL;
+    }
+
+    desc = (V4L2RequestOutputDescriptor *)data;
+    desc->output.fd = -1;
+
+    // Create a V4L2 capture buffer for this AVFrame
+    if (v4l2_request_buffer_alloc(ctx, &desc->output, ctx->output_type) < 0) {
+        av_buffer_unref(&ref);
+        return NULL;
+    }
+
+    if (ioctl(ctx->media_fd, MEDIA_IOC_REQUEST_ALLOC, &desc->output.fd) < 0) {
+        av_log(ctx, AV_LOG_ERROR, "Failed to allocate request %d: %s (%d)\n",
+               desc->output.index, strerror(errno), errno);
+        av_buffer_unref(&ref);
+        return NULL;
+    }
+
+    av_log(ctx, AV_LOG_DEBUG, "%s: ctx=%p size=%zu data=%p index=%d fd=%d\n", __func__, ctx, size, data, desc->output.index, desc->output.fd);
+    return ref;
+}
+
 static void v4l2_request_frame_free(void *opaque, uint8_t *data)
 {
     V4L2RequestFrameDescriptor *desc = (V4L2RequestFrameDescriptor *)data;
+
+    av_log(NULL, AV_LOG_DEBUG, "%s: opaque=%p data=%p\n", __func__, opaque, data);
 
     v4l2_request_buffer_free(&desc->capture);
 
@@ -227,6 +296,8 @@ static AVBufferRef *v4l2_request_frame_alloc(void *opaque, size_t size)
     data = av_mallocz(size);
     if (!data)
         return NULL;
+
+    av_log(ctx, AV_LOG_DEBUG, "%s: ctx=%p size=%zu data=%p\n", __func__, ctx, size, data);
 
     ref = av_buffer_create(data, size, v4l2_request_frame_free, ctx, 0);
     if (!ref) {
@@ -249,11 +320,19 @@ static AVBufferRef *v4l2_request_frame_alloc(void *opaque, size_t size)
         return NULL;
     }
 
+    av_log(ctx, AV_LOG_DEBUG, "%s: ctx=%p size=%zu data=%p index=%d fd=%d\n", __func__, ctx, size, data, desc->capture.index, desc->capture.fd);
     return ref;
+}
+
+static void v4l2_request_pool_free(void *opaque)
+{
+    av_log(NULL, AV_LOG_DEBUG, "%s: opaque=%p\n", __func__, opaque);
 }
 
 static void v4l2_request_hwframe_ctx_free(AVHWFramesContext *hwfc)
 {
+    av_log(NULL, AV_LOG_DEBUG, "%s: hwfc=%p pool=%p\n", __func__, hwfc, hwfc->pool);
+
     av_buffer_pool_uninit(&hwfc->pool);
 }
 
@@ -275,7 +354,7 @@ int ff_v4l2_request_frame_params(AVCodecContext *avctx,
     }
 
     hwfc->pool = av_buffer_pool_init2(sizeof(V4L2RequestFrameDescriptor), ctx,
-                                      v4l2_request_frame_alloc, NULL);
+                                      v4l2_request_frame_alloc, v4l2_request_pool_free);
     if (!hwfc->pool)
         return AVERROR(ENOMEM);
 
@@ -294,12 +373,16 @@ int ff_v4l2_request_frame_params(AVCodecContext *avctx,
         hwfc->initial_pool_size += 2;
     }
 
+    av_log(ctx, AV_LOG_DEBUG, "%s: avctx=%p hw_frames_ctx=%p hwfc=%p pool=%p width=%d height=%d initial_pool_size=%d\n", __func__,
+           avctx, hw_frames_ctx, hwfc, hwfc->pool, hwfc->width, hwfc->height, hwfc->initial_pool_size);
     return 0;
 }
 
 int ff_v4l2_request_uninit(AVCodecContext *avctx)
 {
     V4L2RequestContext *ctx = v4l2_request_context(avctx);
+
+    av_log(ctx, AV_LOG_DEBUG, "%s: avctx=%p ctx=%p\n", __func__, avctx, ctx);
 
     if (ctx->video_fd >= 0) {
         // Stop output queue
@@ -314,10 +397,13 @@ int ff_v4l2_request_uninit(AVCodecContext *avctx)
                    strerror(errno), errno);
         }
 
+        // Release output buffer pool
+        av_buffer_pool_uninit(&ctx->output_pool);
+
         // Release output buffers
-        for (int i = 0; i < FF_ARRAY_ELEMS(ctx->output); i++) {
-            v4l2_request_buffer_free(&ctx->output[i]);
-        }
+        //for (int i = 0; i < FF_ARRAY_ELEMS(ctx->output); i++) {
+        //    v4l2_request_buffer_free(&ctx->output[i]);
+        //}
 
         // Close video device file descriptor
         close(ctx->video_fd);
@@ -333,8 +419,6 @@ int ff_v4l2_request_uninit(AVCodecContext *avctx)
         ctx->media_fd = -1;
     }
 
-    ff_mutex_destroy(&ctx->mutex);
-
     return 0;
 }
 
@@ -344,12 +428,12 @@ static int v4l2_request_init_context(AVCodecContext *avctx)
     int ret;
 
     // Initialize context state
-    ff_mutex_init(&ctx->mutex, NULL);
+    /*
     for (int i = 0; i < FF_ARRAY_ELEMS(ctx->output); i++) {
         ctx->output[i].index = i;
         ctx->output[i].fd = -1;
     }
-    atomic_init(&ctx->next_output, 0);
+    */
 
     // Get format details for capture buffers
     if (ioctl(ctx->video_fd, VIDIOC_G_FMT, &ctx->format) < 0) {
@@ -359,13 +443,47 @@ static int v4l2_request_init_context(AVCodecContext *avctx)
         goto fail;
     }
 
+    if (V4L2_TYPE_IS_MULTIPLANAR(ctx->format.type)) {
+        struct v4l2_pix_format_mplane *fmt = &ctx->format.fmt.pix_mp;
+        av_log(ctx, AV_LOG_DEBUG, "%s: ctx=%p pixelformat=%s width=%u height=%u bytesperline=%u sizeimage=%u num_planes=%u\n", __func__,
+               ctx, av_fourcc2str(fmt->pixelformat), fmt->width, fmt->height, fmt->plane_fmt[0].bytesperline, fmt->plane_fmt[0].sizeimage, fmt->num_planes);
+    } else {
+        struct v4l2_pix_format *fmt = &ctx->format.fmt.pix;
+        av_log(ctx, AV_LOG_DEBUG, "%s: ctx=%p pixelformat=%s width=%u height=%u bytesperline=%u sizeimage=%u\n", __func__,
+               ctx, av_fourcc2str(fmt->pixelformat), fmt->width, fmt->height, fmt->bytesperline, fmt->sizeimage);
+    }
+
     // Create frame context and allocate initial capture buffers
     ret = ff_decode_get_hw_frames_ctx(avctx, AV_HWDEVICE_TYPE_V4L2REQUEST);
     if (ret < 0)
         goto fail;
 
+    // Create output buffer pool
+    ctx->output_pool = av_buffer_pool_init2(sizeof(V4L2RequestOutputDescriptor), ctx,
+                                            v4l2_request_output_alloc, v4l2_request_pool_free);
+    if (!ctx->output_pool) {
+        ret = AVERROR(ENOMEM);
+        goto fail;
+    }
+
+    // Allocate initial output buffers
+    for (int i; i < 4; i++) {
+        AVBufferRef *ref;
+
+        ref = av_buffer_pool_get(ctx->output_pool);
+        if (!ref) {
+            ret = AVERROR(ENOMEM);
+            goto fail;
+        }
+
+        av_buffer_unref(&ref);
+    }
+
+    /*
     // Allocate output buffers for circular queue
     for (int i = 0; i < FF_ARRAY_ELEMS(ctx->output); i++) {
+        ctx->output[i].index = i;
+        ctx->output[i].fd = -1;
         ret = v4l2_request_buffer_alloc(ctx, &ctx->output[i], ctx->output_type);
         if (ret < 0)
             goto fail;
@@ -380,6 +498,7 @@ static int v4l2_request_init_context(AVCodecContext *avctx)
             goto fail;
         }
     }
+    */
 
     // Start output queue
     if (ioctl(ctx->video_fd, VIDIOC_STREAMON, &ctx->output_type) < 0) {
@@ -409,8 +528,10 @@ int ff_v4l2_request_init(AVCodecContext *avctx,
                          struct v4l2_ext_control *control, int count)
 {
     V4L2RequestContext *ctx = v4l2_request_context(avctx);
-    AVV4L2RequestDeviceContext *hwctx = NULL;
+    //AVV4L2RequestDeviceContext *hwctx = NULL;
     int ret;
+
+    av_log(avctx, AV_LOG_DEBUG, "%s: ctx=%p hw_device_ctx=%p hw_frames_ctx=%p\n", __func__, ctx, avctx->hw_device_ctx, avctx->hw_frames_ctx);
 
     // Set initial default values
     ctx->av_class = &v4l2_request_context_class;
@@ -418,13 +539,13 @@ int ff_v4l2_request_init(AVCodecContext *avctx,
     ctx->video_fd = -1;
 
     // Try to use media device file descriptor opened and owned by hwdevice
-    if (avctx->hw_device_ctx) {
-        AVHWDeviceContext *device_ctx = (AVHWDeviceContext *)avctx->hw_device_ctx->data;
-        if (device_ctx->type == AV_HWDEVICE_TYPE_V4L2REQUEST && device_ctx->hwctx) {
-            hwctx = device_ctx->hwctx;
-            ctx->media_fd = hwctx->media_fd;
-        }
-    }
+    //if (avctx->hw_device_ctx) {
+    //    AVHWDeviceContext *device_ctx = (AVHWDeviceContext *)avctx->hw_device_ctx->data;
+    //    if (device_ctx->type == AV_HWDEVICE_TYPE_V4L2REQUEST && device_ctx->hwctx) {
+    //        hwctx = device_ctx->hwctx;
+    //        ctx->media_fd = hwctx->media_fd;
+    //    }
+    //}
 
     // Probe for a capable media and video device for the V4L2 codec pixelformat
     ret = ff_v4l2_request_probe(avctx, pixelformat, buffersize, control, count);
@@ -435,10 +556,10 @@ int ff_v4l2_request_init(AVCodecContext *avctx,
     }
 
     // Transfer (or return) ownership of media device file descriptor to hwdevice
-    if (hwctx) {
-        hwctx->media_fd = ctx->media_fd;
-        ctx->device_ref = av_buffer_ref(avctx->hw_device_ctx);
-    }
+    //if (hwctx) {
+    //    hwctx->media_fd = ctx->media_fd;
+    //    ctx->device_ref = av_buffer_ref(avctx->hw_device_ctx);
+    //}
 
     // Create buffers and finalize init
     return v4l2_request_init_context(avctx);

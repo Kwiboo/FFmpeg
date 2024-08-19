@@ -137,7 +137,7 @@ static int v4l2request_map_frame(AVHWFramesContext *hwfc,
 
     av_assert0(desc->nb_objects <= AV_DRM_MAX_PLANES);
     for (i = 0; i < desc->nb_objects; i++) {
-        addr = mmap(NULL, desc->objects[i].size, AV_HWFRAME_MAP_READ, MAP_SHARED,
+        addr = mmap(NULL, desc->objects[i].size, PROT_READ, MAP_SHARED,
                     desc->objects[i].fd, 0);
         if (addr == MAP_FAILED) {
             av_log(hwfc, AV_LOG_ERROR, "Failed to map DRM object %d to memory: %s (%d)\n",
