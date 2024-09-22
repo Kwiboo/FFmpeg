@@ -218,7 +218,8 @@ static int v4l2_request_vp9_start_frame(AVCodecContext *avctx,
     return 0;
 }
 
-static int v4l2_request_vp9_decode_slice(AVCodecContext *avctx, const uint8_t *buffer, uint32_t size)
+static int v4l2_request_vp9_decode_slice(AVCodecContext *avctx,
+                                         const uint8_t *buffer, uint32_t size)
 {
     const VP9SharedContext *h = avctx->priv_data;
     V4L2RequestControlsVP9 *controls = h->frames[CUR_FRAME].hwaccel_picture_private;
