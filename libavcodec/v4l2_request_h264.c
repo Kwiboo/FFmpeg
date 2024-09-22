@@ -488,7 +488,6 @@ static int v4l2_request_h264_init(AVCodecContext *avctx)
     V4L2RequestContextH264 *ctx = avctx->internal->hwaccel_priv_data;
     const H264Context *h = avctx->priv_data;
     struct v4l2_ctrl_h264_sps sps;
-    int ret;
 
     struct v4l2_ext_control control[] = {
         {
