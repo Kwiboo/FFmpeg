@@ -25,18 +25,173 @@
 
 typedef struct V4L2RequestControlsVP8 {
     V4L2RequestPictureContext pic;
-    struct v4l2_ctrl_vp8_frame ctrl;
+    struct v4l2_ctrl_vp8_frame frame;
 } V4L2RequestControlsVP8;
 
-static int v4l2_request_vp8_start_frame(AVCodecContext          *avctx,
-                                        av_unused const uint8_t *buffer,
-                                        av_unused uint32_t       size)
+static int v4l2_request_vp8_start_frame(AVCodecContext *avctx,
+                                        const uint8_t *buffer,
+                                        av_unused uint32_t size)
+{
+    const VP8Context *s = avctx->priv_data;
+    V4L2RequestControlsVP8 *controls = s->framep[VP8_FRAME_CURRENT]->hwaccel_picture_private;
+    struct v4l2_ctrl_vp8_frame *ctrl = &controls->frame;
+    unsigned int header_size = 3 + 7 * s->keyframe;
+    const uint8_t *data = buffer + header_size;
+    int ret, i, j, k;
+
+    ret = ff_v4l2_request_start_frame(avctx, &controls->pic,
+                                      s->framep[VP8_FRAME_CURRENT]->tf.f);
+    if (ret)
+        return ret;
+
+    *ctrl = (struct v4l2_ctrl_vp8_frame) {
+        .lf = {
+            .sharpness_level = s->filter.sharpness,
+            .level = s->filter.level,
+        },
+
+        .quant = {
+            .y_ac_qi = s->quant.yac_qi,
+            .y_dc_delta = s->quant.ydc_delta,
+            .y2_dc_delta = s->quant.y2dc_delta,
+            .y2_ac_delta = s->quant.y2ac_delta,
+            .uv_dc_delta = s->quant.uvdc_delta,
+            .uv_ac_delta = s->quant.uvac_delta,
+        },
+
+        .coder_state = {
+            .range = s->coder_state_at_header_end.range,
+            .value = s->coder_state_at_header_end.value,
+            .bit_count = s->coder_state_at_header_end.bit_count,
+        },
+
+        .width = avctx->width,
+        .height = avctx->height,
+
+        .horizontal_scale = 0, /* scale not supported by FFmpeg */
+        .vertical_scale = 0, /* scale not supported by FFmpeg */
+
+        .version = s->profile & 0x3,
+        .prob_skip_false = s->prob->mbskip,
+        .prob_intra = s->prob->intra,
+        .prob_last = s->prob->last,
+        .prob_gf = s->prob->golden,
+        .num_dct_parts = s->num_coeff_partitions,
+
+        .first_part_size = s->header_partition_size,
+        .first_part_header_bits = (8 * (s->coder_state_at_header_end.input - data) -
+                                   s->coder_state_at_header_end.bit_count - 8),
+    };
+
+    for (i = 0; i < 4; i++) {
+        ctrl->segment.quant_update[i] = s->segmentation.base_quant[i];
+        ctrl->segment.lf_update[i] = s->segmentation.filter_level[i];
+    }
+
+    for (i = 0; i < 3; i++)
+        ctrl->segment.segment_probs[i] = s->prob->segmentid[i];
+
+    if (s->segmentation.enabled)
+        ctrl->segment.flags |= V4L2_VP8_SEGMENT_FLAG_ENABLED;
+
+    if (s->segmentation.update_map)
+        ctrl->segment.flags |= V4L2_VP8_SEGMENT_FLAG_UPDATE_MAP;
+
+    if (s->segmentation.update_feature_data)
+        ctrl->segment.flags |= V4L2_VP8_SEGMENT_FLAG_UPDATE_FEATURE_DATA;
+
+    if (!s->segmentation.absolute_vals)
+        ctrl->segment.flags |= V4L2_VP8_SEGMENT_FLAG_DELTA_VALUE_MODE;
+
+    for (i = 0; i < 4; i++) {
+        ctrl->lf.ref_frm_delta[i] = s->lf_delta.ref[i];
+        ctrl->lf.mb_mode_delta[i] = s->lf_delta.mode[i + MODE_I4x4];
+    }
+
+    if (s->lf_delta.enabled)
+        ctrl->lf.flags |= V4L2_VP8_LF_ADJ_ENABLE;
+
+    if (s->lf_delta.update)
+        ctrl->lf.flags |= V4L2_VP8_LF_DELTA_UPDATE;
+
+    if (s->filter.simple)
+        ctrl->lf.flags |= V4L2_VP8_LF_FILTER_TYPE_SIMPLE;
+
+    if (s->keyframe) {
+        static const uint8_t keyframe_y_mode_probs[4] = {
+            145, 156, 163, 128
+        };
+        static const uint8_t keyframe_uv_mode_probs[3] = {
+            142, 114, 183
+        };
+
+        memcpy(ctrl->entropy.y_mode_probs, keyframe_y_mode_probs, 4);
+        memcpy(ctrl->entropy.uv_mode_probs, keyframe_uv_mode_probs, 3);
+    } else {
+        for (i = 0; i < 4; i++)
+            ctrl->entropy.y_mode_probs[i] = s->prob->pred16x16[i];
+        for (i = 0; i < 3; i++)
+            ctrl->entropy.uv_mode_probs[i] = s->prob->pred8x8c[i];
+    }
+    for (i = 0; i < 2; i++)
+        for (j = 0; j < 19; j++)
+            ctrl->entropy.mv_probs[i][j] = s->prob->mvc[i][j];
+
+    for (i = 0; i < 4; i++) {
+        for (j = 0; j < 8; j++) {
+            static const int coeff_bands_inverse[8] = {
+                0, 1, 2, 3, 5, 6, 4, 15
+            };
+            int coeff_pos = coeff_bands_inverse[j];
+
+            for (k = 0; k < 3; k++) {
+                memcpy(ctrl->entropy.coeff_probs[i][j][k],
+                       s->prob->token[i][coeff_pos][k], 11);
+            }
+        }
+    }
+
+    for (i = 0; i < 8; i++)
+        ctrl->dct_part_sizes[i] = s->coeff_partition_size[i];
+
+    if (s->framep[VP8_FRAME_PREVIOUS])
+        ctrl->last_frame_ts =
+            ff_v4l2_request_get_capture_timestamp(s->framep[VP8_FRAME_PREVIOUS]->tf.f);
+    if (s->framep[VP8_FRAME_GOLDEN])
+        ctrl->golden_frame_ts =
+            ff_v4l2_request_get_capture_timestamp(s->framep[VP8_FRAME_GOLDEN]->tf.f);
+    if (s->framep[VP8_FRAME_ALTREF])
+        ctrl->alt_frame_ts =
+            ff_v4l2_request_get_capture_timestamp(s->framep[VP8_FRAME_ALTREF]->tf.f);
+
+    if (s->keyframe)
+        ctrl->flags |= V4L2_VP8_FRAME_FLAG_KEY_FRAME;
+
+    if (s->profile & 0x4)
+        ctrl->flags |= V4L2_VP8_FRAME_FLAG_EXPERIMENTAL;
+
+    if (!s->invisible)
+        ctrl->flags |= V4L2_VP8_FRAME_FLAG_SHOW_FRAME;
+
+    if (s->mbskip_enabled)
+        ctrl->flags |= V4L2_VP8_FRAME_FLAG_MB_NO_SKIP_COEFF;
+
+    if (s->sign_bias[VP8_FRAME_GOLDEN])
+        ctrl->flags |= V4L2_VP8_FRAME_FLAG_SIGN_BIAS_GOLDEN;
+
+    if (s->sign_bias[VP8_FRAME_ALTREF])
+        ctrl->flags |= V4L2_VP8_FRAME_FLAG_SIGN_BIAS_ALT;
+
+    return 0;
+}
+
+static int v4l2_request_vp8_decode_slice(AVCodecContext *avctx,
+                                         const uint8_t *buffer, uint32_t size)
 {
     const VP8Context *s = avctx->priv_data;
     V4L2RequestControlsVP8 *controls = s->framep[VP8_FRAME_CURRENT]->hwaccel_picture_private;
 
-    return ff_v4l2_request_start_frame(avctx, &controls->pic,
-                                       s->framep[VP8_FRAME_CURRENT]->tf.f);
+    return ff_v4l2_request_append_output(avctx, &controls->pic, buffer, size);
 }
 
 static int v4l2_request_vp8_end_frame(AVCodecContext *avctx)
@@ -47,120 +202,13 @@ static int v4l2_request_vp8_end_frame(AVCodecContext *avctx)
     struct v4l2_ext_control control[] = {
         {
             .id = V4L2_CID_STATELESS_VP8_FRAME,
-            .ptr = &controls->ctrl,
-            .size = sizeof(controls->ctrl),
+            .ptr = &controls->frame,
+            .size = sizeof(controls->frame),
         },
     };
 
     return ff_v4l2_request_decode_frame(avctx, &controls->pic,
                                         control, FF_ARRAY_ELEMS(control));
-}
-
-static int v4l2_request_vp8_decode_slice(AVCodecContext *avctx,
-                                         const uint8_t *buffer,
-                                         uint32_t size)
-{
-    const VP8Context *s = avctx->priv_data;
-    V4L2RequestControlsVP8 *controls = s->framep[VP8_FRAME_CURRENT]->hwaccel_picture_private;
-    struct v4l2_ctrl_vp8_frame *frame = &controls->ctrl;
-    const uint8_t *data = buffer + 3 + 7 * s->keyframe;
-    unsigned int i, j, k;
-
-    frame->version = s->profile & 0x3;
-    frame->width = avctx->width;
-    frame->height = avctx->height;
-    /* FIXME: set ->xx_scale */
-    frame->prob_skip_false = s->prob->mbskip;
-    frame->prob_intra = s->prob->intra;
-    frame->prob_gf = s->prob->golden;
-    frame->prob_last = s->prob->last;
-    frame->first_part_size = s->header_partition_size;
-    frame->first_part_header_bits = (8 * (s->coder_state_at_header_end.input - data) -
-                                    s->coder_state_at_header_end.bit_count - 8);
-    frame->num_dct_parts = s->num_coeff_partitions;
-    for (i = 0; i < 8; i++)
-        frame->dct_part_sizes[i] = s->coeff_partition_size[i];
-
-    frame->coder_state.range = s->coder_state_at_header_end.range;
-    frame->coder_state.value = s->coder_state_at_header_end.value;
-    frame->coder_state.bit_count = s->coder_state_at_header_end.bit_count;
-    if (s->framep[VP8_FRAME_PREVIOUS])
-        frame->last_frame_ts = ff_v4l2_request_get_capture_timestamp(s->framep[VP8_FRAME_PREVIOUS]->tf.f);
-    if (s->framep[VP8_FRAME_GOLDEN])
-        frame->golden_frame_ts = ff_v4l2_request_get_capture_timestamp(s->framep[VP8_FRAME_GOLDEN]->tf.f);
-    if (s->framep[VP8_FRAME_ALTREF])
-        frame->alt_frame_ts = ff_v4l2_request_get_capture_timestamp(s->framep[VP8_FRAME_ALTREF]->tf.f);
-    frame->flags |= s->invisible ? 0 : V4L2_VP8_FRAME_FLAG_SHOW_FRAME;
-    frame->flags |= s->mbskip_enabled ? V4L2_VP8_FRAME_FLAG_MB_NO_SKIP_COEFF : 0;
-    frame->flags |= (s->profile & 0x4) ? V4L2_VP8_FRAME_FLAG_EXPERIMENTAL : 0;
-    frame->flags |= s->keyframe ? V4L2_VP8_FRAME_FLAG_KEY_FRAME : 0;
-    frame->flags |= s->sign_bias[VP8_FRAME_GOLDEN] ? V4L2_VP8_FRAME_FLAG_SIGN_BIAS_GOLDEN : 0;
-    frame->flags |= s->sign_bias[VP8_FRAME_ALTREF] ? V4L2_VP8_FRAME_FLAG_SIGN_BIAS_ALT : 0;
-    frame->segment.flags |= s->segmentation.enabled ? V4L2_VP8_SEGMENT_FLAG_ENABLED : 0;
-    frame->segment.flags |= s->segmentation.update_map ? V4L2_VP8_SEGMENT_FLAG_UPDATE_MAP : 0;
-    frame->segment.flags |= s->segmentation.update_feature_data ? V4L2_VP8_SEGMENT_FLAG_UPDATE_FEATURE_DATA : 0;
-    frame->segment.flags |= s->segmentation.absolute_vals ? 0 : V4L2_VP8_SEGMENT_FLAG_DELTA_VALUE_MODE;
-    for (i = 0; i < 4; i++) {
-        frame->segment.quant_update[i] = s->segmentation.base_quant[i];
-        frame->segment.lf_update[i] = s->segmentation.filter_level[i];
-    }
-
-    for (i = 0; i < 3; i++)
-        frame->segment.segment_probs[i] = s->prob->segmentid[i];
-
-    frame->lf.level = s->filter.level;
-    frame->lf.sharpness_level = s->filter.sharpness;
-    frame->lf.flags |= s->lf_delta.enabled ? V4L2_VP8_LF_ADJ_ENABLE : 0;
-    frame->lf.flags |= s->lf_delta.update ? V4L2_VP8_LF_DELTA_UPDATE : 0;
-    frame->lf.flags |= s->filter.simple ? V4L2_VP8_LF_FILTER_TYPE_SIMPLE : 0;
-    for (i = 0; i < 4; i++) {
-        frame->lf.ref_frm_delta[i] = s->lf_delta.ref[i];
-        frame->lf.mb_mode_delta[i] = s->lf_delta.mode[i + MODE_I4x4];
-    }
-
-    // Probabilites
-    if (s->keyframe) {
-        static const uint8_t keyframe_y_mode_probs[4] = {
-            145, 156, 163, 128
-        };
-        static const uint8_t keyframe_uv_mode_probs[3] = {
-            142, 114, 183
-        };
-
-        memcpy(frame->entropy.y_mode_probs, keyframe_y_mode_probs,  4);
-        memcpy(frame->entropy.uv_mode_probs, keyframe_uv_mode_probs, 3);
-    } else {
-        for (i = 0; i < 4; i++)
-            frame->entropy.y_mode_probs[i] = s->prob->pred16x16[i];
-        for (i = 0; i < 3; i++)
-            frame->entropy.uv_mode_probs[i] = s->prob->pred8x8c[i];
-    }
-    for (i = 0; i < 2; i++)
-        for (j = 0; j < 19; j++)
-            frame->entropy.mv_probs[i][j] = s->prob->mvc[i][j];
-
-    for (i = 0; i < 4; i++) {
-        for (j = 0; j < 8; j++) {
-            static const int coeff_bands_inverse[8] = {
-                0, 1, 2, 3, 5, 6, 4, 15
-            };
-            int coeff_pos = coeff_bands_inverse[j];
-
-            for (k = 0; k < 3; k++) {
-                memcpy(frame->entropy.coeff_probs[i][j][k],
-                       s->prob->token[i][coeff_pos][k], 11);
-            }
-        }
-    }
-
-    frame->quant.y_ac_qi = s->quant.yac_qi;
-    frame->quant.y_dc_delta = s->quant.ydc_delta;
-    frame->quant.y2_dc_delta = s->quant.y2dc_delta;
-    frame->quant.y2_ac_delta = s->quant.y2ac_delta;
-    frame->quant.uv_dc_delta = s->quant.uvdc_delta;
-    frame->quant.uv_ac_delta = s->quant.uvac_delta;
-
-    return ff_v4l2_request_append_output(avctx, &controls->pic, buffer, size);
 }
 
 static int v4l2_request_vp8_init(AVCodecContext *avctx)
