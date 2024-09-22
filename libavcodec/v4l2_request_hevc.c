@@ -185,7 +185,7 @@ static int fill_slice_params(V4L2RequestControlsHEVC *controls, int slice,
 
     *slice_params = (struct v4l2_ctrl_hevc_slice_params) {
         .bit_size = 0,
-        .data_byte_offset = sh->data_offset,
+        .data_byte_offset = controls->pic.output->used + sh->data_offset,
         .num_entry_point_offsets = sh->num_entry_point_offsets,
 
         /* ISO/IEC 23008-2, ITU-T Rec. H.265: NAL unit header */
@@ -583,6 +583,14 @@ static int v4l2_request_hevc_decode_slice(AVCodecContext *avctx,
         controls->first_slice = false;
     }
 
+    if (ctx->start_code == V4L2_STATELESS_HEVC_START_CODE_ANNEX_B) {
+        ret = ff_v4l2_request_append_output(avctx, &controls->pic,
+                                            nalu_slice_start_code, 3);
+        if (ret)
+            return ret;
+        extra_size = 3;
+    }
+
     if (ctx->max_slice_params) {
         if (slice && controls->allocated_slice_params < slice + 1) {
             void *slice_params = controls->allocated_slice_params == 0 ? NULL : controls->frame_slice_params;
@@ -599,14 +607,6 @@ static int v4l2_request_hevc_decode_slice(AVCodecContext *avctx,
         ret = fill_slice_params(controls, slice, !!ctx->max_entry_point_offsets, h);
         if (ret)
             return ret;
-    }
-
-    if (ctx->start_code == V4L2_STATELESS_HEVC_START_CODE_ANNEX_B) {
-        ret = ff_v4l2_request_append_output(avctx, &controls->pic,
-                                            nalu_slice_start_code, 3);
-        if (ret)
-            return ret;
-        extra_size = 3;
     }
 
     ret = ff_v4l2_request_append_output(avctx, &controls->pic, buffer, size);
@@ -688,55 +688,10 @@ static int v4l2_request_hevc_post_probe(AVCodecContext *avctx)
         ctx->max_entry_point_offsets = 0;
 
     ret = ff_v4l2_request_query_control(avctx, &slice_params);
-    if (!ret) {
+    if (!ret)
         ctx->max_slice_params = FFMAX(slice_params.dims[0], 1);
-
-        /*
-         * There is some uncertainty on what value to use for data_byte_offset
-         * when a driver support multiple slice params. Documentation state:
-         *
-         *   Offset (in bytes) to the video data in the current slice data.
-         *
-         * This hwaccel implementation uses the value of sh->data_offset for
-         * each slice, e.g. the offset in the specific slice data.
-         *
-         * However, downstream rpivid driver, first driver to use multiple
-         * slice params for a slice-based decoder, instead expects that the
-         * value matches the accumulated offset in the output buffer.
-         *
-         * Limit to only support a single slice when using slice-based decoding
-         * until this uncertainty has settled.
-         */
-        if (ctx->max_slice_params > 1 &&
-            ctx->decode_mode == V4L2_STATELESS_HEVC_DECODE_MODE_SLICE_BASED)
-            ctx->max_slice_params = 1;
-    } else {
+    else
         ctx->max_slice_params = 0;
-
-        /*
-         * NOTE: Is next two checks something we need or should care about?
-         *
-         * The code here adapts and only sets slice params control based on
-         * value of max_slice_params, regardless of what decode mode is used.
-         *
-         * For a slice-based decoder having support for the slice params
-         * control is more than likely a requirement, however not something we
-         * need to enforce here.
-         */
-        if (ctx->decode_mode == V4L2_STATELESS_HEVC_DECODE_MODE_SLICE_BASED) {
-            av_log(ctx, AV_LOG_ERROR,
-                   "Slice-based decoder, "
-                   "required SLICE_PARAMS control is missing\n");
-            return AVERROR(EINVAL);
-        }
-
-        if (ctx->max_entry_point_offsets) {
-            av_log(ctx, AV_LOG_ERROR,
-                   "Decoder with ENTRY_POINT_OFFSETS control, "
-                   "required SLICE_PARAMS control is missing\n");
-            return AVERROR(EINVAL);
-        }
-    }
 
     av_log(ctx, AV_LOG_VERBOSE, "%s-based decoder with SLICE_PARAMS=%u, "
            "ENTRY_POINT_OFFSETS=%u and SCALING_MATRIX=%d controls\n",
@@ -754,7 +709,6 @@ static int v4l2_request_hevc_init(AVCodecContext *avctx)
     V4L2RequestContextHEVC *ctx = avctx->internal->hwaccel_priv_data;
     const HEVCContext *h = avctx->priv_data;
     struct v4l2_ctrl_hevc_sps sps;
-    int ret;
 
     struct v4l2_ext_control control[] = {
         {
