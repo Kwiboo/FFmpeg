@@ -258,9 +258,7 @@ static int v4l2_request_try_framesize(AVCodecContext *avctx,
         } else if ((frmsize.type == V4L2_FRMSIZE_TYPE_STEPWISE ||
                     frmsize.type == V4L2_FRMSIZE_TYPE_CONTINUOUS) &&
                    avctx->coded_width <= frmsize.stepwise.max_width &&
-                   avctx->coded_height <= frmsize.stepwise.max_height &&
-                   avctx->coded_width % frmsize.stepwise.step_width == 0 &&
-                   avctx->coded_height % frmsize.stepwise.step_height == 0) {
+                   avctx->coded_height <= frmsize.stepwise.max_height) {
             return 0;
         }
 
