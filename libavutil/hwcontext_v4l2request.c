@@ -85,6 +85,28 @@ static const struct {
     { V4L2_PIX_FMT_NV12MT_10_COL128, AV_PIX_FMT_YUV420P10, DRM_FORMAT_P030, DRM_FORMAT_MOD_BROADCOM_SAND128, 10 },
 #endif
 #endif
+#if defined(V4L2_PIX_FMT_YUV420_8_AFBC_16X16_SPLIT)
+    {
+        .pixelformat = V4L2_PIX_FMT_YUV420_8_AFBC_16X16_SPLIT,
+        .sw_format = AV_PIX_FMT_YUV420P,
+        .drm_format = DRM_FORMAT_YUV420_8BIT,
+        .format_modifier = DRM_FORMAT_MOD_ARM_AFBC(AFBC_FORMAT_MOD_BLOCK_SIZE_16x16 |
+                                                   AFBC_FORMAT_MOD_SPARSE |
+                                                   AFBC_FORMAT_MOD_SPLIT),
+        .bit_depth = 8,
+    },
+#endif
+#if defined(V4L2_PIX_FMT_YUV420_10_AFBC_16X16_SPLIT)
+    {
+        .pixelformat = V4L2_PIX_FMT_YUV420_10_AFBC_16X16_SPLIT,
+        .sw_format = AV_PIX_FMT_YUV420P10,
+        .drm_format = DRM_FORMAT_YUV420_10BIT,
+        .format_modifier = DRM_FORMAT_MOD_ARM_AFBC(AFBC_FORMAT_MOD_BLOCK_SIZE_16x16 |
+                                                   AFBC_FORMAT_MOD_SPARSE |
+                                                   AFBC_FORMAT_MOD_SPLIT),
+        .bit_depth = 10,
+    },
+#endif
 };
 
 static int v4l2request_set_drm_descriptor(AVDRMFrameDescriptor *desc,
@@ -115,7 +137,7 @@ static int v4l2request_set_drm_descriptor(AVDRMFrameDescriptor *desc,
     }
 
     desc->nb_layers = 1;
-    layer->nb_planes = 2;
+    layer->nb_planes = 1;
 
     layer->planes[0].object_index = 0;
     layer->planes[0].offset = 0;
@@ -123,12 +145,16 @@ static int v4l2request_set_drm_descriptor(AVDRMFrameDescriptor *desc,
                              format->fmt.pix_mp.plane_fmt[0].bytesperline :
                              format->fmt.pix.bytesperline;
 
-    layer->planes[1].object_index = 0;
-    layer->planes[1].offset = layer->planes[0].pitch *
-                              (V4L2_TYPE_IS_MULTIPLANAR(format->type) ?
-                               format->fmt.pix_mp.height :
-                               format->fmt.pix.height);
-    layer->planes[1].pitch = layer->planes[0].pitch;
+    // AFBC formats only use 1 plane, remaining use 2 planes
+    if ((desc->objects[0].format_modifier >> 56) != DRM_FORMAT_MOD_VENDOR_ARM) {
+        layer->nb_planes = 2;
+        layer->planes[1].object_index = 0;
+        layer->planes[1].offset = layer->planes[0].pitch *
+                                  (V4L2_TYPE_IS_MULTIPLANAR(format->type) ?
+                                   format->fmt.pix_mp.height :
+                                   format->fmt.pix.height);
+        layer->planes[1].pitch = layer->planes[0].pitch;
+    }
 
 #if defined(V4L2_PIX_FMT_NV12MT_COL128) && defined(V4L2_PIX_FMT_NV12MT_10_COL128)
     // Raspberry Pi formats need special handling
